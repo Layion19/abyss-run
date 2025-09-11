@@ -8,7 +8,8 @@
   <!-- Fonts du titre -->
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Orbitron:wght@500&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="/static/abyss/css/game.css">
+  <!-- ✅ chemins relatifs -->
+  <link rel="stylesheet" href="static/abyss/css/game.css">
   <style>
     /* ==== Mise en page générale ==== */
     :root{
@@ -137,7 +138,6 @@
     }
     .touch-top{ top:0; }
     .touch-bottom{ bottom:0; }
-    /* feedback léger (optionnel, discret) */
     .touch-layer.active .touch-top{ background:rgba(255,255,255,0.02); }
     .touch-layer.active .touch-bottom{ background:rgba(255,255,255,0.02); }
 
@@ -181,7 +181,8 @@
       <div class="game-frame" id="gameFrame">
         <!-- Overlay de démarrage -->
         <div id="start-screen" class="start-screen">
-          <img id="start-bg" src="/static/abyss/img/start-screen.png" alt="">
+          <!-- ✅ chemin relatif -->
+          <img id="start-bg" src="static/abyss/img/start-screen.png" alt="">
           <div class="start-ui">
             <p class="start-hints">P = Play • SPACE = Jump • SHIFT = Boost • ↑/↓ = Move • R = Restart</p>
             <button id="start-btn">▶ Play</button>
@@ -250,8 +251,8 @@
     </section>
   </div>
 
-  <!-- ton jeu -->
-  <script src="/static/abyss/js/game.js"></script>
+  <!-- ton jeu (✅ chemin relatif) -->
+  <script src="static/abyss/js/game.js"></script>
 
   <!-- Script UI + intégration backend -->
   <script>
@@ -298,12 +299,13 @@
     }
 
     // ---------- Boutons ----------
-    connectBtn?.addEventListener('click', () => { location.href='/auth/x/login'; });
+    // ✅ chemins relatifs (pas de / au début)
+    connectBtn?.addEventListener('click', () => { location.href='auth/x/login'; });
     rankBtn?.addEventListener('click', async () => {
       const { player_id } = getIdentity();
       if (!player_id){ alert('Please connect with X first.'); return; }
       try{
-        const r = await fetch(`/api/rank/${player_id}`);
+        const r = await fetch(`api/rank/${player_id}`);
         if (!r.ok) throw new Error('HTTP '+r.status);
         const data = await r.json();
         const rk = data.rank ?? '—';
@@ -315,14 +317,14 @@
     // ---------- Leaderboard (Top 100 + surbrillance joueur) ----------
     async function refreshLeaders(){
       try{
-        const r = await fetch('/api/leaderboard');
+        const r = await fetch('api/leaderboard');
         if (!r.ok) throw new Error('HTTP '+r.status);
         const data = await r.json();
         renderLeaders((data.top || []).slice(0, 100));
         const { player_id } = getIdentity();
         if (player_id){
           try{
-            const rkRes = await fetch(`/api/rank/${player_id}`);
+            const rkRes = await fetch(`api/rank/${player_id}`);
             if (rkRes.ok){
               const rk = await rkRes.json();
               if (rankBadge) rankBadge.textContent = `Rank: ${rk.rank ?? '—'}`;
@@ -359,7 +361,7 @@
     (function start(){
       applyConnectedUI();
       refreshLeaders();
-      setInterval(refreshLeaders, 3000000); // tu avais déjà allongé l'intervalle
+      setInterval(refreshLeaders, 3000000); // intervalle long, comme tu l’avais
     })();
 
     // ---------- Overlay Start → démarre le jeu ----------
@@ -384,7 +386,6 @@
       if (!goRestart) return;
 
       goRestart.addEventListener('click', () => {
-        // On délègue le reset à game.js via le bouton HUD existant
         try{ hudRestart && hudRestart.click(); }catch{}
         if (goOverlay) goOverlay.style.display = 'none';
       });
@@ -395,7 +396,6 @@
     const touchTop    = qs('touchTop');
     const touchBottom = qs('touchBottom');
 
-    // Petits utilitaires pour détecter "mode mobile paysage"
     function isMobileLike(){
       const ua = navigator.userAgent || '';
       return /Android|iPhone|iPad|iPod/i.test(ua) || Math.min(innerWidth, innerHeight) < 860;
@@ -414,10 +414,9 @@
     window.addEventListener('resize', updateTouchLayerVisibility);
     window.addEventListener('orientationchange', updateTouchLayerVisibility);
 
-    // On émet des CustomEvents vers game.js pour UP/DOWN/BOOST
+    // CustomEvents vers game.js pour UP/DOWN/BOOST
     function emitGameEvent(name, detail){ document.dispatchEvent(new CustomEvent(name, { detail })); }
 
-    // Maintien haut/bas (sans Jump)
     function bindHold(el, actionDown, actionUp){
       if (!el) return;
       let pressed = false, lastTapTime = 0;
@@ -426,7 +425,6 @@
         pressed = true;
         touchLayer && touchLayer.classList.add('active');
         emitGameEvent(actionDown);
-        // double-tap anywhere on touchLayer = BOOST toggle ON (émis ici aussi)
         const now = ev.timeStamp || Date.now();
         if (now - lastTapTime < 280){ emitGameEvent('boost:start'); }
         lastTapTime = now;
@@ -442,7 +440,6 @@
       el.addEventListener('touchstart', onDown, { passive:false });
       el.addEventListener('touchend', onUp,   { passive:false });
       el.addEventListener('touchcancel', onUp, { passive:false });
-      // clic souris éventuel (tablettes hybrides) — facultatif
       el.addEventListener('mousedown', onDown);
       window.addEventListener('mouseup', onUp);
     }

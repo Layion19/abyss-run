@@ -1,6 +1,6 @@
 // ================= Angry Whales — Abyss Run (game.js) =====================
 // Canvas responsive, gameplay intact, envoi de score après login X,
-// pas de pause (Play démarre uniquement).
+// pas de pause (Play démarre uniquement). Chemins relatifs pour /abyssrun.
 // ==========================================================================
 
 (function () {
@@ -100,7 +100,7 @@
     tilt: 0
   };
 
-  // ---------- Sprites ----------
+  // ---------- Sprites (✅ chemins relatifs) ----------
   function loadSprite(paths){
     const img=new Image(); let ready=false, i=0;
     function next(){ if(i>=paths.length) return; img.src=paths[i++]; img.onload=()=>ready=true; img.onerror=next; }
@@ -108,14 +108,14 @@
     return {img, get ready(){return ready;}}; }
 
   const sprites = {
-    whale: loadSprite(["/static/abyss/img/whale.png"]),
-    orca : loadSprite(["/static/abyss/img/orca.png"]),
-    orb  : loadSprite(["/static/abyss/img/orb.png"]),
-    mine : loadSprite(["/static/abyss/img/mine.png"]),
-    heart: loadSprite(["/static/abyss/img/heart.png"])
+    whale: loadSprite(["static/abyss/img/whale.png"]),
+    orca : loadSprite(["static/abyss/img/orca.png"]),
+    orb  : loadSprite(["static/abyss/img/orb.png"]),
+    mine : loadSprite(["static/abyss/img/mine.png"]),
+    heart: loadSprite(["static/abyss/img/heart.png"])
   };
 
-  // ---------- Audio ----------
+  // ---------- Audio (✅ chemins relatifs) ----------
   function loadAudio(candidates, {loop=false, volume=1.0} = {}){
     const a = new Audio();
     a.preload = "auto";
@@ -126,22 +126,22 @@
   }
   const audio = {
     bgm: loadAudio([
-      "/static/abyss/sfx/music.mp3",
-      "/static/abyss/sfx/music.ogg",
-      "/static/abyss/sfx/music.wav",
+      "static/abyss/sfx/music.mp3",
+      "static/abyss/sfx/music.ogg",
+      "static/abyss/sfx/music.wav",
     ], {loop:true, volume:0.6}),
     orb: loadAudio([
-      "/static/abyss/sfx/orb.wav",
-      "/static/abyss/sfx/orb.mp3",
+      "static/abyss/sfx/orb.wav",
+      "static/abyss/sfx/orb.mp3",
     ], {volume:0.7}),
     explosion: loadAudio([
-      "/static/abyss/sfx/explosion.mp3",
-      "/static/abyss/sfx/explosion.wav",
+      "static/abyss/sfx/explosion.mp3",
+      "static/abyss/sfx/explosion.wav",
     ], {volume:0.85}),
     heart: loadAudio([
-      "/static/abyss/sfx/HEARTZEMI.mp3",
-      "/static/abyss/sfx/heart.mp3",
-      "/static/abyss/sfx/heart.wav",
+      "static/abyss/sfx/HEARTZEMI.mp3",
+      "static/abyss/sfx/heart.mp3",
+      "static/abyss/sfx/heart.wav",
     ], {volume:0.9}),
   };
   let musicEnabled = true;
@@ -233,7 +233,8 @@
     };
     if (payload.score <= lastSubmitted.score && payload.xp <= lastSubmitted.xp) return;
 
-    try { await postJSON('/api/submit-score', payload); lastSubmitted = payload; }
+    // ✅ endpoint relatif pour fonctionner sous /abyssrun
+    try { await postJSON('api/submit-score', payload); lastSubmitted = payload; }
     catch(e){ console.warn('submit-score failed:', e); }
   }
 
@@ -254,7 +255,7 @@
   });
   function doJump(){ player.vy = Math.max(player.vy - player.jumpImpulse, -player.maxVy); }
 
-  // ---------- Contrôles mobile (touch) ----------
+  // ---------- Contrôles mobile (touch sur canvas) ----------
   const mobileCtrl = {
     active: false,
     lastTap: 0,
@@ -319,8 +320,16 @@
   canvas.addEventListener("touchend",   onTouchEnd,   {passive:false});
   canvas.addEventListener("touchcancel",onTouchEnd,   {passive:false});
 
+  // ---------- Support de la couche tactile HTML (index.html)
+  // Events émis: 'touch:up:down' / 'touch:up:up' / 'touch:down:down' / 'touch:down:up' / 'boost:start'
+  document.addEventListener('touch:up:down',  ()=>{ keys.add('arrowup');  });
+  document.addEventListener('touch:up:up',    ()=>{ keys.delete('arrowup'); player.boost=false; });
+  document.addEventListener('touch:down:down',()=>{ keys.add('arrowdown');});
+  document.addEventListener('touch:down:up',  ()=>{ keys.delete('arrowdown'); player.boost=false; });
+  document.addEventListener('boost:start',    ()=>{ player.boost = true; });
+
   // ---------- Water (strip miroir offscreen) ----------
-  const WATER_CANDIDATES = ["/static/abyss/img/water.png","/static/abyss/img/Water.png"];
+  const WATER_CANDIDATES = ["static/abyss/img/water.png","static/abyss/img/Water.png"];
   const waterTex = new Image(); let waterReady=false;
   let strip=null, stripCtx=null, stripW=0, stripH=0, waterU=0;
 
@@ -512,7 +521,7 @@
   }
 
   // ---------- BRUME PNG (au-dessus de tout) ----------
-  const FOG_PATH = "/static/abyss/img/";
+  const FOG_PATH = "static/abyss/img/"; // ✅ chemin relatif
   const FOG_FILES = ["Fog1.png","Fog2.png","Fog3.png","Fog4.png","FogDark1.png","FogDark2.png"];
   const fogTextures = [];
   (function loadFogTextures(){
@@ -537,7 +546,6 @@
   }
 
   function spawnFogPhase1IfNeeded(){
-    // Si aucun nuage à l’écran, on en ajoute un (texture suivante dans la séquence)
     if (fogSprites.length > 0) return;
 
     const scale = W()/820;
@@ -545,13 +553,13 @@
     fogSeqIndex++;
 
     const tex = fogTextures[texIndex];
-    const r = 220 * scale;             // taille fixe douce
+    const r = 220 * scale;
     const w = r*2.0, h = r*2.0;
 
-    const vx = -worldSpeed() * 0.22;   // glisse lentement
+    const vx = -worldSpeed() * 0.22;
     const vy = (Math.random()*10 - 5);
     const y  = Math.min(H()-60, Math.max(60, Math.random()*(H()-120)+60));
-    const life = 11 + Math.random()*2; // durée suffisante pour traverser
+    const life = 11 + Math.random()*2;
 
     fogSprites.push({
       x: W()+w*0.5, y,
@@ -559,7 +567,7 @@
       tex,
       life: 0,
       maxLife: life,
-      alphaMul: 0.15, // clair et lisible
+      alphaMul: 0.15,
       twist: Math.random()*Math.PI*2
     });
   }
@@ -568,17 +576,15 @@
     const lvl = fogMixLevel();
     if (lvl <= 0) return;
 
-    // taux de spawn progressif en phase 2
     const rate = 0.8 + 6.0*lvl;          // nuages/s
     fogSpawnBucket += dt * rate;
 
     const scale = W()/820;
-    const darkWeight = 0.15 + 0.70*lvl;  // plus de dark avec le score
+    const darkWeight = 0.15 + 0.70*lvl;
 
     while (fogSpawnBucket >= 1){
       fogSpawnBucket -= 1;
 
-      // choix clair/dark
       let texIndex;
       if (Math.random() < darkWeight){
         texIndex = 4 + Math.floor(Math.random()*2);   // Dark1..2
@@ -587,7 +593,6 @@
       }
       const tex = fogTextures[texIndex];
 
-      // taille : les dark un peu plus grands
       const base = (texIndex>=4 ? 260 : 200);
       const r = (base + 180*lvl) * scale;
       const w = r*2.0, h = r*2.0;
@@ -603,7 +608,7 @@
         tex,
         life: 0,
         maxLife: life,
-        alphaMul: 0.16 + 0.22*lvl,    // densité augmente
+        alphaMul: 0.16 + 0.22*lvl,
         twist: Math.random()*Math.PI*2
       });
     }
@@ -648,14 +653,12 @@
     const up   = keys.has("arrowup")   || keys.has("w");
     const down = keys.has("arrowdown") || keys.has("s");
 
-    // Mobile : si un touch actif, on “lerp” la whale vers targetY
     if (mobileCtrl.active && mobileCtrl.targetY != null){
       const aim = clamp(mobileCtrl.targetY, 26, H()-26);
       const k = 10.0; // agressivité du suivi
       const dy = aim - player.y;
       player.vy = clamp(player.vy + dy * k * dt, -player.maxVy, player.maxVy);
     } else {
-      // clavier
       let ay = 0;
       if (up && !down) ay -= player.accelY;
       if (down && !up) ay += player.accelY;
@@ -708,7 +711,6 @@
       mObj.x += vx;
       if (mObj.x < -60){ mines.splice(i,1); continue; }
 
-      // Début du clignotement quand elle approche de la whale
       if (mObj.explosive && !mObj.exploded && !mObj.blinking){
         if (mObj.x < player.x() + W()*0.18) {
           mObj.blinking = true;
@@ -716,7 +718,6 @@
           mObj.blinkCount = 0;
         }
       }
-      // 3 clignotements rapides
       if (mObj.blinking && !mObj.exploded){
         mObj.blinkTimer += dt;
         if (mObj.blinkTimer >= 0.25){
@@ -732,13 +733,10 @@
           }
         }
       }
-      // Sécurité : force l’explosion si elle dépasse la whale après clignotements
       if (mObj.explosive && !mObj.exploded && mObj.blinkCount >= 3 && mObj.x < player.x() - W()*0.08){
         triggerMineExplosion(i, mObj);
         continue;
       }
-
-      // Collision directe mine/whale si pas encore explosée
       if (!mObj.exploded){
         if (rectCircleHit(mObj.x,mObj.y,mObj.w,mObj.h, player.x(),player.y,player.radius)){
           spawnExplosion(mObj.x + mObj.w * 0.5, mObj.y + mObj.h * 0.5, Math.max(mObj.w,mObj.h));
@@ -817,9 +815,10 @@
     mines.splice(index,1);
   }
 
-  // ---------- Game Over Overlay (optionnel si présent dans l'HTML) ----------
-  const elGameOver = document.getElementById('gameover');      // un conteneur overlay
-  const elGoBtn    = document.getElementById('goRestart');     // un bouton “Restart” dans l’overlay
+  // ---------- Game Over Overlay ----------
+  const elGameOver = document.getElementById('gameover');
+  // (id du bouton dans l’HTML: "go-restart")
+  const elGoBtn    = document.getElementById('go-restart');
   elGoBtn && elGoBtn.addEventListener('click', () => {
     hideGameOverOverlay();
     resetGame();
@@ -944,7 +943,6 @@
   }
 
   function drawMine(m){
-    // sprite / fallback
     if (sprites.mine.ready){
       const s=Math.max(m.w,m.h)*1.35;
       ctx.drawImage(sprites.mine.img, m.x+(m.w-s)/2, m.y+(m.h-s)/2, s, s);
@@ -956,7 +954,7 @@
       ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.fill(); ctx.restore();
     }
 
-    // point lumineux au centre (vert par défaut / ambre / rouge clignotant)
+    // point lumineux au centre
     const cx = m.x + m.w*0.5;
     const cy = m.y + m.h*0.5;
 
