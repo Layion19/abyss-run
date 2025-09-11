@@ -1,0 +1,102 @@
+:root{
+  --bg:#0b1220; --fg:#e8f1ff; --accent:#6dd5ff; --accent2:#4cafb0; --danger:#ff6b6b;
+}
+
+/* Base */
+html,body{
+  height:100%; margin:0;
+  font-family:system-ui,Segoe UI,Roboto,Ubuntu,Inter,sans-serif;
+  background:#0b1220; color:var(--fg);
+}
+#wrap{display:block}
+h1{font-size:24px; margin:8px 0 0; color:var(--fg)}
+.sub{opacity:.85; font-size:14px; margin:0 0 12px}
+
+/* Mise en page principale (mêmes classes que ton index) */
+.wrap      { max-width:1400px; margin:0 auto; padding:16px; }
+.stage     {
+  background:#0b1427; border:1px solid #1a2a4a; border-radius:14px;
+  padding:16px; box-shadow:0 10px 30px rgba(0,0,0,.35);
+}
+
+/* Cadre du jeu : important -> position:relative pour l’overlay */
+.game-frame{
+  position:relative;
+  background:#0e172b; border:1px solid #1a2a4a; border-radius:12px;
+  overflow:hidden;
+}
+
+/* Canvas */
+canvas{
+  display:block;
+  width:100%; height:auto;
+  background:linear-gradient(180deg,#0b1b33,#06101f 70%);
+  border:1px solid #1a2a4a; border-radius:12px;
+}
+
+/* HUD & boutons */
+.hud{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px}
+.btn{
+  appearance:none; border:0; padding:10px 14px; border-radius:12px;
+  background:#1a2a4a; color:var(--fg); cursor:pointer; font-weight:600;
+}
+.btn:hover{filter:brightness(1.1)}
+.pill{padding:8px 12px; border-radius:999px; background:#12203d; font-size:12px}
+.hint{opacity:.7; font-size:12px}
+
+/* ============================= */
+/* ÉCRAN DE DÉMARRAGE DANS LE JEU */
+/* ============================= */
+/* Le conteneur est ABSOLUMENT positionné sur .game-frame (grâce à position:relative ci-dessus) */
+#start-screen{
+  position:absolute; inset:0;
+  display:flex; flex-direction:column; justify-content:center; align-items:center;
+  padding:24px;
+  /* voile sombre translucide + léger flou pour que ça “flotte” au-dessus du canvas */
+  background:rgba(0,0,0,0.72);
+  backdrop-filter: blur(2px);
+  z-index:10;
+}
+/* permet au JS de simplement mettre [hidden] pour masquer l’écran */
+#start-screen[hidden]{ display:none !important; }
+
+/* Logo/image de splash */
+.start-logo{
+  max-width:80%;
+  height:auto;
+  margin:0 auto 20px auto;
+  display:block;
+  filter: drop-shadow(0 8px 18px rgba(0,0,0,.45));
+}
+
+/* Bouton Play “hero” */
+.start-btn{
+  padding:12px 24px;
+  font-size:20px;
+  cursor:pointer;
+  border:none;
+  border-radius:10px;
+  background:#ffcc00; color:#0b0b0b;
+  font-weight:800;
+  box-shadow:0 8px 22px rgba(255,204,0,.22);
+  transition:transform .12s ease, filter .12s ease;
+}
+.start-btn:hover{ transform:translateY(-1px); filter:brightness(1.05); }
+.start-btn:active{ transform:translateY(0); filter:brightness(.98); }
+
+/* Lignes d’instructions */
+.start-controls{
+  margin-top:16px;
+  font-size:15px;
+  text-align:center;
+  line-height:1.6;
+  color:#eaf2ff;
+  opacity:.95;
+  text-shadow:0 1px 0 rgba(0,0,0,.25);
+}
+
+/* Petites adaptations sur écrans étroits */
+@media (max-width: 640px){
+  .start-btn{ font-size:18px; padding:10px 20px; }
+  .start-controls{ font-size:14px; }
+}

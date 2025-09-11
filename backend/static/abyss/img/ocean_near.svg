@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540">
+  <!-- rubans vagues doux -->
+  <path d="M0,120 C160,90 320,150 480,120 640,90 800,150 960,120" fill="none" stroke="#aee9f0" stroke-opacity=".25" stroke-width="4"/>
+  <path d="M0,240 C160,210 320,270 480,240 640,210 800,270 960,240" fill="none" stroke="#c6f4f8" stroke-opacity=".22" stroke-width="4"/>
+  <path d="M0,360 C160,330 320,390 480,360 640,330 800,390 960,360" fill="none" stroke="#e1fdff" stroke-opacity=".20" stroke-width="4"/>
+</svg>
