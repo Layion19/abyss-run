@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Angry Whales — Abyss Run</title>
 
-  <!-- Fonts du titre -->
+  <!-- Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Orbitron:wght@500&display=swap" rel="stylesheet">
 
   <!-- ✅ chemins relatifs -->
@@ -16,7 +16,7 @@
       --brand-yellow:#ffcc00;
       --brand-blue:#6dd5ff;
     }
-    body{ margin:0; }
+    html,body{ margin:0; padding:0; }
     .wrap      { max-width: 1400px; margin: 0 auto; padding: 16px; }
 
     /* ==== Carte du jeu ==== */
@@ -26,14 +26,14 @@
     }
     .game-frame{
       position:relative;
-      /* clé : largeur bornée par la hauteur du viewport (80%), ratio 16:9 */
+      /* ratio 16:9 borné par la hauteur du viewport (80%) */
       width: min(100%, calc(100vh * 0.80 * (16 / 9)));
-      margin: 0 auto;         /* ✅ centré */
-      display: block;         /* ✅ important : pour que margin auto centre bien */
+      margin: 0 auto;
+      display: block;
       background:#0e172b; border:1px solid #1a2a4a; border-radius:12px; overflow:hidden;
-      touch-action:none; /* réduit les gestuelles navigateur */
+      touch-action:none; /* réduit les gestuelles navigateur (utile sur mobile) */
     }
-    /* le canvas suit la largeur du cadre */
+    /* le canvas suit la largeur du cadre sans déformer l'image */
     #game{ display:block; width:100%; height:auto; }
 
     .below{ margin-top:22px; }
@@ -153,6 +153,10 @@
       max-width:540px;
     }
     .rotate-hint b{ color:var(--brand-yellow); }
+
+    /* si caché → ne capte pas les clics */
+    .rotate-hint[aria-hidden="true"]{ display:none !important; pointer-events:none !important; }
+
     @media (max-width: 900px){
       .wrap{ padding:12px; }
       .title .angry{ font-size:2.4rem; }
@@ -161,7 +165,7 @@
   </style>
 </head>
 <body>
-  <!-- Alerte orient. mobile -->
+  <!-- Alerte orient. mobile (affichée UNIQUEMENT sur mobile/tablette via JS) -->
   <div id="rotateHint" class="rotate-hint" aria-hidden="true">
     <div class="box">
       <p style="margin:0 0 6px;">For a better experience, please rotate your phone.</p>
@@ -234,6 +238,7 @@
           <span id="rankBadge" class="rank-badge">Rank: —</span>
         </div>
         <div class="actions">
+          <!-- ✅ chemins relatifs -->
           <button id="showRankBtn" class="btn btn-outline" type="button">Your rank</button>
           <button id="connectXBtn" class="btn-x" type="button" aria-pressed="false">
             <svg class="x-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -361,7 +366,7 @@
     (function start(){
       applyConnectedUI();
       refreshLeaders();
-      setInterval(refreshLeaders, 3000000); // intervalle long, comme tu l’avais
+      setInterval(refreshLeaders, 3000000);
     })();
 
     // ---------- Overlay Start → démarre le jeu ----------
@@ -378,7 +383,7 @@
       });
     })();
 
-    // ---------- Overlay Game Over : seul le bouton est câblé ici ----------
+    // ---------- Overlay Game Over : bouton relié au bouton HUD Restart ----------
     (function wireGameOverOverlay(){
       const goOverlay = qs('gameover');
       const goRestart = qs('go-restart');
@@ -391,73 +396,86 @@
       });
     })();
 
-    // ---------- Couche tactile mobile (sans Jump) ----------
-    const touchLayer  = qs('touchLayer');
-    const touchTop    = qs('touchTop');
-    const touchBottom = qs('touchBottom');
-
-    function isMobileLike(){
+    // ================== TOUT CE QUI SUIT NE S'ACTIVE QUE SUR MOBILE/TABLETTE ==================
+    (function(){
       const ua = navigator.userAgent || '';
-      return /Android|iPhone|iPad|iPod/i.test(ua) || Math.min(innerWidth, innerHeight) < 860;
-    }
-    function shouldShowTouchLayer(){
-      const landscape = window.innerWidth > window.innerHeight;
-      return isMobileLike() && landscape;
-    }
-    function updateTouchLayerVisibility(){
-      if (!touchLayer) return;
-      const show = shouldShowTouchLayer();
-      touchLayer.style.display = show ? 'block' : 'none';
-      touchLayer.setAttribute('aria-hidden', show ? 'false' : 'true');
-    }
-    updateTouchLayerVisibility();
-    window.addEventListener('resize', updateTouchLayerVisibility);
-    window.addEventListener('orientationchange', updateTouchLayerVisibility);
+      const isMobileUA  = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+      const hasTouch    = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+      const isMobileLike= isMobileUA || hasTouch;
 
-    // CustomEvents vers game.js pour UP/DOWN/BOOST
-    function emitGameEvent(name, detail){ document.dispatchEvent(new CustomEvent(name, { detail })); }
+      if (!isMobileLike) {
+        // Desktop/laptop : on ne câble rien de mobile pour éviter les lags et les surcharges.
+        // On s'assure aussi que les overlays mobiles soient désactivés.
+        const rotateHint = qs('rotateHint');
+        rotateHint && (rotateHint.style.display = 'none');
+        const touchLayer = qs('touchLayer');
+        touchLayer && (touchLayer.style.display = 'none');
+        return;
+      }
 
-    function bindHold(el, actionDown, actionUp){
-      if (!el) return;
-      let pressed = false, lastTapTime = 0;
+      // ----- Couche tactile (seulement mobile) -----
+      const touchLayer  = qs('touchLayer');
+      const touchTop    = qs('touchTop');
+      const touchBottom = qs('touchBottom');
 
-      const onDown = (ev) => {
-        pressed = true;
-        touchLayer && touchLayer.classList.add('active');
-        emitGameEvent(actionDown);
-        const now = ev.timeStamp || Date.now();
-        if (now - lastTapTime < 280){ emitGameEvent('boost:start'); }
-        lastTapTime = now;
-        ev.preventDefault();
-      };
-      const onUp = (ev) => {
-        if (pressed){ emitGameEvent(actionUp); }
-        pressed = false;
-        touchLayer && touchLayer.classList.remove('active');
-        ev.preventDefault();
-      };
+      function landscape(){ return window.innerWidth > window.innerHeight; }
+      function narrow(){ return Math.min(window.innerWidth, window.innerHeight) < 860; }
 
-      el.addEventListener('touchstart', onDown, { passive:false });
-      el.addEventListener('touchend', onUp,   { passive:false });
-      el.addEventListener('touchcancel', onUp, { passive:false });
-      el.addEventListener('mousedown', onDown);
-      window.addEventListener('mouseup', onUp);
-    }
+      function updateTouchLayerVisibility(){
+        if (!touchLayer) return;
+        const show = landscape();
+        touchLayer.style.display = show ? 'block' : 'none';
+        touchLayer.setAttribute('aria-hidden', show ? 'false' : 'true');
+      }
 
-    bindHold(touchTop,    'touch:up:down',   'touch:up:up');
-    bindHold(touchBottom, 'touch:down:down', 'touch:down:up');
+      // On émet des CustomEvents vers game.js
+      function emitGameEvent(name, detail){ document.dispatchEvent(new CustomEvent(name, { detail })); }
 
-    // ---------- Indice orientation mobile ----------
-    const rotateHint = qs('rotateHint');
-    function updateRotateHint(){
-      const isNarrow = Math.min(window.innerWidth, window.innerHeight) < 860;
-      const portrait = window.innerHeight > window.innerWidth;
-      const show = isNarrow && portrait;
-      if (rotateHint) rotateHint.style.display = show ? 'flex' : 'none';
-    }
-    updateRotateHint();
-    window.addEventListener('resize', updateRotateHint);
-    window.addEventListener('orientationchange', updateRotateHint);
+      function bindHold(el, actionDown, actionUp){
+        if (!el) return;
+        let pressed = false, lastTapTime = 0;
+
+        const onDown = (ev) => {
+          pressed = true;
+          touchLayer && touchLayer.classList.add('active');
+          emitGameEvent(actionDown);
+          const now = ev.timeStamp || Date.now();
+          if (now - lastTapTime < 280){ emitGameEvent('boost:start'); }
+          lastTapTime = now;
+          ev.preventDefault();
+        };
+        const onUp = (ev) => {
+          if (pressed){ emitGameEvent(actionUp); }
+          pressed = false;
+          touchLayer && touchLayer.classList.remove('active');
+          ev.preventDefault();
+        };
+
+        el.addEventListener('touchstart', onDown, { passive:false });
+        el.addEventListener('touchend',   onUp,   { passive:false });
+        el.addEventListener('touchcancel',onUp,   { passive:false });
+      }
+
+      bindHold(touchTop,    'touch:up:down',   'touch:up:up');
+      bindHold(touchBottom, 'touch:down:down', 'touch:down:up');
+
+      updateTouchLayerVisibility();
+      window.addEventListener('resize', updateTouchLayerVisibility);
+      window.addEventListener('orientationchange', updateTouchLayerVisibility);
+
+      // ----- Alerte orientation (seulement mobile) -----
+      const rotateHint = qs('rotateHint');
+      function updateRotateHint(){
+        if (!rotateHint) return;
+        const show = !landscape() && narrow();
+        rotateHint.style.display   = show ? 'flex' : 'none';
+        rotateHint.setAttribute('aria-hidden', show ? 'false' : 'true');
+      }
+      updateRotateHint();
+      window.addEventListener('resize', updateRotateHint);
+      window.addEventListener('orientationchange', updateRotateHint);
+    })();
+    // ================== FIN BLOC SPÉCIFIQUE MOBILE ==================
   </script>
 </body>
 </html>

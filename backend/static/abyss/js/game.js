@@ -1,12 +1,17 @@
 // ================= Angry Whales — Abyss Run (game.js) =====================
-// Canvas responsive, gameplay intact, envoi de score après login X,
-// pas de pause (Play démarre uniquement). Chemins relatifs pour /abyssrun.
+// Difficulté progressive (mines groupées "portes" avec couloir sûr), Fog + rapide,
+// séparation Desktop/Mobile maintenue, Safari ok.
 // ==========================================================================
 
 (function () {
   "use strict";
 
-  // ---------- Identité joueur (stockée en localStorage via /auth redirect) ----------
+  // ---------- Détection plateforme (séparation Desktop / Mobile) ----------
+  const IS_MOBILE =
+    /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "") ||
+    (typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches);
+
+  // ---------- Identité joueur ----------
   function getParam(name){ return new URLSearchParams(window.location.search).get(name); }
   function saveIdentity(pid, handle){
     if (pid)    localStorage.setItem('player_id', pid);
@@ -29,7 +34,7 @@
 
   // ---------- Canvas responsive ----------
   const canvas = document.getElementById("game");
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { alpha: true, desynchronized: true });
   const TARGET_ASPECT = 16 / 9;
 
   function fitCanvas() {
@@ -43,6 +48,7 @@
   }
   fitCanvas();
   addEventListener("resize", fitCanvas);
+  addEventListener("orientationchange", () => setTimeout(fitCanvas, 90));
 
   const W = () => canvas.width;
   const H = () => canvas.height;
@@ -69,16 +75,32 @@
     elapsed: 0,
     baseSpeed: 240,
     rng: mulberry32(Date.now() & 0xffffffff),
+
     // timers
     orbTimer: 0.6,
     mineTimer: 0.9,
     orcaTimer: 2.8,
     heartTimer: 120.0,
     nextHeartAt: 120.0,
+
+    // cooldown portes de mines
+    gateCooldown: 0
   };
+
+  function difficulty() {
+    // 0 → ~0.6 entre 0 et 2000 XP, puis jusqu’à ~1.0 vers 5000+
+    const s = state.score;
+    const a = clamp(s / 2000, 0, 1) * 0.6;     // montée rapide
+    const b = clamp((s-2000)/3000, 0, 1) * 0.4; // finition douce
+    return clamp(a + b, 0, 1);
+  }
+
   function worldSpeed(){
     const scale = W() / 820;
-    return state.baseSpeed * scale * (player.boost ? 1.6 : 1.0);
+    const d = difficulty();
+    // Légère montée de la vitesse globale avec la difficulté
+    const speedMul = 1 + d * 0.18;
+    return state.baseSpeed * speedMul * scale * (player.boost ? 1.6 : 1.0);
   }
   function orcaSpeedFactor(){
     const minutes = Math.floor(state.elapsed / 60);
@@ -144,6 +166,8 @@
       "static/abyss/sfx/heart.wav",
     ], {volume:0.9}),
   };
+  window.audio = audio;
+
   let musicEnabled = true;
   let sfxEnabled   = true;
 
@@ -187,7 +211,6 @@
   });
   rangeMusic && rangeMusic.addEventListener("input", setMusicVolumeFromSlider);
 
-  // IMPORTANT: Play ne fait que démarrer (pas de pause)
   btnPlay && btnPlay.addEventListener("click", () => {
     if (!state.running) startRun();
   });
@@ -209,6 +232,7 @@
     player.y=H()*0.5; player.vy=0; player.tilt=0; player.boost=false;
     state.orbTimer=0.8; state.mineTimer=1.2; state.orcaTimer=3.2;
     state.heartTimer=120.0; state.nextHeartAt=120.0;
+    state.gateCooldown = 0;
     waterU=0;
   }
 
@@ -219,12 +243,11 @@
     try{ a.play(); }catch{}
   }
 
-  // ---------- Soumission du score (fin de run) ----------
+  // ---------- Soumission du score ----------
   let lastSubmitted = { score: 0, xp: 0, level: 1 };
   async function submitBestRun() {
     const { player_id } = getIdentity();
-    if (!player_id) return; // pas connecté
-
+    if (!player_id) return;
     const payload = {
       player_id,
       score: Math.max(0, Math.floor(state.score)),
@@ -232,34 +255,38 @@
       level: Math.max(1, Math.floor(1 + state.score / 200))
     };
     if (payload.score <= lastSubmitted.score && payload.xp <= lastSubmitted.xp) return;
-
-    // ✅ endpoint relatif pour fonctionner sous /abyssrun
     try { await postJSON('api/submit-score', payload); lastSubmitted = payload; }
     catch(e){ console.warn('submit-score failed:', e); }
   }
 
-  // ---------- Input clavier ----------
+  // ---------- Input (séparé Desktop / Mobile) ----------
   const keys=new Set();
-  addEventListener("keydown",e=>{
-    const k=e.key.toLowerCase();
-    if (["arrowup","arrowdown","w","s"," ","r","shift"].includes(k)) e.preventDefault();
-    if (k==="r") { hideGameOverOverlay(); resetGame(); }
-    if (k==="shift") player.boost=true;
-    if (k===" ") doJump();
-    keys.add(k);
-  });
-  addEventListener("keyup",e=>{
-    const k=e.key.toLowerCase();
-    if (k==="shift") player.boost=false;
-    keys.delete(k);
-  });
+  let mobUp=false, mobDown=false;
+
+  if (!IS_MOBILE) {
+    addEventListener("keydown",e=>{
+      const k=e.key.toLowerCase();
+      if (["arrowup","arrowdown","w","s"," ","r","shift"].includes(k)) e.preventDefault();
+      if (k==="r") { hideGameOverOverlay(); resetGame(); }
+      if (k==="shift") player.boost=true;
+      if (k===" ") doJump();
+      keys.add(k);
+    }, {passive:false});
+
+    addEventListener("keyup",e=>{
+      const k=e.key.toLowerCase();
+      if (k==="shift") player.boost=false;
+      keys.delete(k);
+    });
+  }
+
   function doJump(){ player.vy = Math.max(player.vy - player.jumpImpulse, -player.maxVy); }
 
-  // ---------- Contrôles mobile (touch sur canvas) ----------
+  // Mobile : drag + double-tap boost
   const mobileCtrl = {
     active: false,
     lastTap: 0,
-    boostTouchId: null, // le touch qui a déclenché le boost
+    boostTouchId: null,
     targetY: null
   };
 
@@ -276,12 +303,10 @@
     const now = performance.now();
     const dtTap = now - mobileCtrl.lastTap;
 
-    // position visée
     const p = canvasPointFromTouch(t);
     mobileCtrl.active = true;
     mobileCtrl.targetY = p.y;
 
-    // double-tap = boost ON (tant que le doigt reste posé)
     if (dtTap < 300){
       player.boost = true;
       mobileCtrl.boostTouchId = t.identifier;
@@ -298,35 +323,45 @@
   }
   function onTouchEnd(e){
     if (!e.changedTouches || e.changedTouches.length===0) return;
-    // si le touch qui a activé le boost se termine → boost OFF
     for (const t of e.changedTouches){
       if (t.identifier === mobileCtrl.boostTouchId){
         player.boost = false;
         mobileCtrl.boostTouchId = null;
       }
     }
-    // plus de touches à l’écran ?
     if (e.touches.length === 0){
       mobileCtrl.active = false;
       mobileCtrl.targetY = null;
-      // sécurité : on coupe le boost s’il était encore actif
       player.boost = false;
       mobileCtrl.boostTouchId = null;
     }
     e.preventDefault();
   }
-  canvas.addEventListener("touchstart", onTouchStart, {passive:false});
-  canvas.addEventListener("touchmove",  onTouchMove,  {passive:false});
-  canvas.addEventListener("touchend",   onTouchEnd,   {passive:false});
-  canvas.addEventListener("touchcancel",onTouchEnd,   {passive:false});
 
-  // ---------- Support de la couche tactile HTML (index.html)
-  // Events émis: 'touch:up:down' / 'touch:up:up' / 'touch:down:down' / 'touch:down:up' / 'boost:start'
-  document.addEventListener('touch:up:down',  ()=>{ keys.add('arrowup');  });
-  document.addEventListener('touch:up:up',    ()=>{ keys.delete('arrowup'); player.boost=false; });
-  document.addEventListener('touch:down:down',()=>{ keys.add('arrowdown');});
-  document.addEventListener('touch:down:up',  ()=>{ keys.delete('arrowdown'); player.boost=false; });
-  document.addEventListener('boost:start',    ()=>{ player.boost = true; });
+  if (IS_MOBILE) {
+    canvas.addEventListener("touchstart", onTouchStart, {passive:false});
+    canvas.addEventListener("touchmove",  onTouchMove,  {passive:false});
+    canvas.addEventListener("touchend",   onTouchEnd,   {passive:false});
+    canvas.addEventListener("touchcancel",onTouchEnd,   {passive:false});
+
+    document.addEventListener('touch:up:down',   ()=>{ mobUp=true; },  false);
+    document.addEventListener('touch:up:up',     ()=>{ mobUp=false; }, false);
+    document.addEventListener('touch:down:down', ()=>{ mobDown=true;}, false);
+    document.addEventListener('touch:down:up',   ()=>{ mobDown=false;},false);
+    document.addEventListener('boost:start',     ()=>{
+      player.boost = true;
+      setTimeout(()=>{ if (!mobileCtrl.active) player.boost=false; }, 1200);
+    }, false);
+  }
+
+  // ---------- Visibility ----------
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      try{ audio.bgm.pause(); }catch{}
+    } else {
+      try{ if (musicEnabled && state.running) audio.bgm.play(); }catch{}
+    }
+  });
 
   // ---------- Water (strip miroir offscreen) ----------
   const WATER_CANDIDATES = ["static/abyss/img/water.png","static/abyss/img/Water.png"];
@@ -389,8 +424,6 @@
       ctx.drawImage(strip, u,   sy, w1, sh, 0,   dy, dw1, dh);
       ctx.drawImage(strip, 0.0, sy, w2, sh, dw1, dy, dw-dw1, dh);
     }
-
-    // NOTE: pas d’assombrissement ni vignette ici — uniquement l’image Water.
   }
 
   // ---------- Entities ----------
@@ -400,7 +433,11 @@
   const hearts=[];   // {x,y,s}
 
   const rand=(a,b)=>a+(b-a)*state.rng();
-  function spawnOrb(){ const s = 14 * (W()/820); orbs.push({x:W()+40, y:rand(60,H()-60), r:s, phase: rand(0,Math.PI*2)}); }
+
+  function spawnOrb(){
+    const s = 14 * (W()/820);
+    orbs.push({x:W()+40, y:rand(60,H()-60), r:s, phase: rand(0,Math.PI*2)});
+  }
 
   function explosiveChance(){
     if (state.score < 500) return 0;
@@ -408,7 +445,26 @@
     return 0.18 + t*(0.50-0.18);
   }
 
+  // ---- Mines : simples OU “porte” (cluster avec couloir sûr) ----
+  function gateChance(){
+    // commence vers 800 XP → ~18% à 2000 → ~28% à 3500+
+    const s = state.score;
+    if (s < 800) return 0;
+    if (s > 3500) return 0.28;
+    if (s > 2000) return 0.18 + (s-2000)*(0.10/1500);
+    // entre 800 et 2000
+    return (s-800)*(0.18/1200);
+  }
+
   function spawnMine(){
+    // respecte un cooldown pour les portes
+    if (state.gateCooldown <= 0 && state.rng() < gateChance()){
+      spawnMineGate();
+      // cooldown 3.5s → 6.5s variable
+      state.gateCooldown = 3.5 + state.rng()*3.0;
+      return;
+    }
+
     const s = rand(22,30)*(W()/820);
     const m = {
       x: W()+60, y: rand(60,H()-60), w: s, h: s,
@@ -419,6 +475,53 @@
       exploded: false
     };
     mines.push(m);
+  }
+
+  function spawnMineGate(){
+    const h = H();
+    const w = W();
+
+    // taille et pas verticaux
+    const baseSize = 24*(W()/820);
+    const rowStep = 64*(h/720); // écart régulier
+    const margin = 48*(h/720);
+
+    // couloir sûr (hauteur du passage)
+    const minGap = 120*(h/720);
+    const gapGrow = 60*(1 - difficulty())*(h/720); // un peu plus serré quand c’est dur
+    const gap = Math.max(minGap, minGap + gapGrow);
+
+    // centre du couloir près de la baleine ± aléa
+    const gapCenter = clamp(player.y + rand(-80,80), margin+gap*0.5, h-margin-gap*0.5);
+    const gapTop = gapCenter - gap*0.5;
+    const gapBottom = gapCenter + gap*0.5;
+
+    // nombre de mines verticales
+    const rows = Math.floor((h - margin*2) / rowStep);
+    const xStart = w + 70;
+    const xJitter = 22*(W()/820); // léger décalage horizontal
+
+    for (let i=0;i<=rows;i++){
+      const y = margin + i*rowStep + rand(-6,6);
+      // saute si à l’intérieur du couloir
+      if (y > gapTop && y < gapBottom) continue;
+
+      const s = rand(baseSize*0.9, baseSize*1.25);
+      const jitter = rand(-xJitter, xJitter);
+      const explosive = state.rng() < (explosiveChance() * 0.65); // un peu moins d’explosives dans les portes
+
+      mines.push({
+        x: xStart + jitter,
+        y,
+        w: s,
+        h: s,
+        explosive,
+        blinking:false,
+        blinkCount:0,
+        blinkTimer:0,
+        exploded:false
+      });
+    }
   }
 
   function spawnOrca(){ const s=64*(W()/820); orcas.push({x:W()+90,y:rand(70,H()-70),w:s,h:s,vy:rand(-40,40),phase:rand(0,Math.PI*2)}); }
@@ -468,7 +571,7 @@
     ctx.restore();
   }
 
-  // ---------- Bulles (joueur + orques) ----------
+  // ---------- Bulles ----------
   const bubbles=[];
   function spawnBubbles(dt){
     const rate = player.boost? 120 : 60;
@@ -520,8 +623,8 @@
     ctx.restore();
   }
 
-  // ---------- BRUME PNG (au-dessus de tout) ----------
-  const FOG_PATH = "static/abyss/img/"; // ✅ chemin relatif
+  // ---------- BRUME PNG ----------
+  const FOG_PATH = "static/abyss/img/";
   const FOG_FILES = ["Fog1.png","Fog2.png","Fog3.png","Fog4.png","FogDark1.png","FogDark2.png"];
   const fogTextures = [];
   (function loadFogTextures(){
@@ -532,16 +635,17 @@
     }
   })();
 
-  // Entités de brume
-  const fogSprites = []; // {x,y,w,h,vx,vy,tex,life,maxLife,alphaMul,twist}
+  const fogSprites = [];
   let fogSpawnBucket = 0;
+  const FOG_CAP = 10; // anti-surcharge
 
-  // Phase 1 (≤ 1500) : un seul nuage à la fois, cycle Fog1→Fog2→Fog3→Fog4
-  const fogSeq = [0,1,2,3]; // indices dans FOG_FILES
+  // Séquence phase 1
+  const fogSeq = [0,1,2,3];
   let fogSeqIndex = 0;
 
-  function fogMixLevel(){ // 0..1 à partir de 1500 → 5000
-    const start = 1500, end = 5000;
+  // Fog plus tôt et plus vite : 1000 → 2500 XP
+  function fogMixLevel(){
+    const start = 1000, end = 2500;
     return clamp((state.score - start)/(end - start), 0, 1);
   }
 
@@ -556,10 +660,10 @@
     const r = 220 * scale;
     const w = r*2.0, h = r*2.0;
 
-    const vx = -worldSpeed() * 0.22;
+    const vx = -worldSpeed() * 0.26; // + rapide qu’avant (0.22)
     const vy = (Math.random()*10 - 5);
     const y  = Math.min(H()-60, Math.max(60, Math.random()*(H()-120)+60));
-    const life = 11 + Math.random()*2;
+    const life = 8.5 + Math.random()*1.5; // moins longtemps
 
     fogSprites.push({
       x: W()+w*0.5, y,
@@ -567,7 +671,7 @@
       tex,
       life: 0,
       maxLife: life,
-      alphaMul: 0.15,
+      alphaMul: 0.14,
       twist: Math.random()*Math.PI*2
     });
   }
@@ -576,7 +680,7 @@
     const lvl = fogMixLevel();
     if (lvl <= 0) return;
 
-    const rate = 0.8 + 6.0*lvl;          // nuages/s
+    const rate = 0.8 + 6.0*lvl;
     fogSpawnBucket += dt * rate;
 
     const scale = W()/820;
@@ -584,6 +688,8 @@
 
     while (fogSpawnBucket >= 1){
       fogSpawnBucket -= 1;
+
+      if (fogSprites.length >= FOG_CAP) break;
 
       let texIndex;
       if (Math.random() < darkWeight){
@@ -597,10 +703,10 @@
       const r = (base + 180*lvl) * scale;
       const w = r*2.0, h = r*2.0;
 
-      const vx = -worldSpeed() * (0.22 + 0.18*lvl) + (Math.random()*24 - 12);
+      const vx = -worldSpeed() * (0.26 + 0.22*lvl) + (Math.random()*24 - 12); // + rapide
       const vy = (Math.random()*16 - 8);
       const y  = Math.min(H()-40, Math.max(40, Math.random()*(H()-80)+40));
-      const life = 9 + 9*lvl + (Math.random()*2-1);
+      const life = 7.5 + 6*lvl + (Math.random()*1.5-0.75); // moins long
 
       fogSprites.push({
         x: W()+w*0.5, y,
@@ -629,7 +735,7 @@
     ctx.save();
     for (const f of fogSprites){
       const t = clamp(f.life / f.maxLife, 0, 1);
-      const a = Math.sin(Math.PI * t);           // fade in/out
+      const a = Math.sin(Math.PI * t);
       const alpha = f.alphaMul * a;
 
       if (f.tex && f.tex.complete){
@@ -649,17 +755,23 @@
   function update(dt){
     state.elapsed += dt;
 
-    // mouvements clavier OU mobile
-    const up   = keys.has("arrowup")   || keys.has("w");
-    const down = keys.has("arrowdown") || keys.has("s");
+    // cooldown “porte” mines
+    if (state.gateCooldown > 0) state.gateCooldown -= dt;
 
-    if (mobileCtrl.active && mobileCtrl.targetY != null){
+    // mouvements
+    const kUp   = keys.has("arrowup")   || keys.has("w");
+    const kDown = keys.has("arrowdown") || keys.has("s");
+    const tUp = mobUp, tDown = mobDown;
+
+    if (IS_MOBILE && mobileCtrl.active && mobileCtrl.targetY != null){
       const aim = clamp(mobileCtrl.targetY, 26, H()-26);
-      const k = 10.0; // agressivité du suivi
+      const k = 10.0;
       const dy = aim - player.y;
       player.vy = clamp(player.vy + dy * k * dt, -player.maxVy, player.maxVy);
     } else {
       let ay = 0;
+      const up   = tUp   || kUp;
+      const down = tDown || kDown;
       if (up && !down) ay -= player.accelY;
       if (down && !up) ay += player.accelY;
       if (player.boost) ay *= 1.2;
@@ -680,18 +792,28 @@
     // bulles
     spawnBubbles(dt); updateBubbles(dt);
 
-    // difficulté (fréquences de spawn)
-    const spawnScale = 1 + Math.min(0.9, (state.elapsed/70) + (state.score/1400));
+    // difficulté → timers plus courts
+    const d = difficulty();
+    const spawnScale = 1 + Math.min(1.2, (state.elapsed/70) + (state.score/1200) + d*0.6);
+
     state.orbTimer   -= dt;
     state.mineTimer  -= dt;
     state.orcaTimer  -= dt;
     state.heartTimer -= dt;
 
-    if (state.orbTimer <= 0){  spawnOrb();  state.orbTimer  = (Math.random()*(1.25-0.85)+0.85) / spawnScale; }
-    if (state.mineTimer <= 0){ spawnMine(); state.mineTimer = (Math.random()*(1.70-1.10)+1.10) / spawnScale; }
+    if (state.orbTimer <= 0){
+      spawnOrb();
+      const base = (Math.random()*(1.15-0.80)+0.80);
+      state.orbTimer  = base / spawnScale;
+    }
+    if (state.mineTimer <= 0){
+      spawnMine();
+      const base = (Math.random()*(1.55-0.95)+0.95);
+      state.mineTimer = base / (spawnScale * (1 + d*0.25)); // un peu plus de mines tard
+    }
     if ((state.score>160 || state.elapsed>28) && state.orcaTimer <= 0){
       spawnOrca();
-      state.orcaTimer = (Math.random()*(6.6-4.2)+4.2) / (0.85 + 0.55*spawnScale);
+      state.orcaTimer = (Math.random()*(6.4-4.0)+4.0) / (0.85 + 0.55*spawnScale);
     }
     if (state.elapsed >= state.nextHeartAt && state.heartTimer <= 0){
       if (state.rng() < 0.5) spawnHeart();
@@ -711,6 +833,7 @@
       mObj.x += vx;
       if (mObj.x < -60){ mines.splice(i,1); continue; }
 
+      // Approche → blink (explosives)
       if (mObj.explosive && !mObj.exploded && !mObj.blinking){
         if (mObj.x < player.x() + W()*0.18) {
           mObj.blinking = true;
@@ -733,10 +856,13 @@
           }
         }
       }
+      // Sécurité : explose si dépasse après blink
       if (mObj.explosive && !mObj.exploded && mObj.blinkCount >= 3 && mObj.x < player.x() - W()*0.08){
         triggerMineExplosion(i, mObj);
         continue;
       }
+
+      // Collision mine/whale
       if (!mObj.exploded){
         if (rectCircleHit(mObj.x,mObj.y,mObj.w,mObj.h, player.x(),player.y,player.radius)){
           spawnExplosion(mObj.x + mObj.w * 0.5, mObj.y + mObj.h * 0.5, Math.max(mObj.w,mObj.h));
@@ -785,8 +911,8 @@
       }
     }
 
-    // Brume PNG
-    if (state.score < 1500){
+    // Brume
+    if (state.score < 1000){
       spawnFogPhase1IfNeeded();
     } else {
       spawnFogPhase2(dt);
@@ -817,7 +943,6 @@
 
   // ---------- Game Over Overlay ----------
   const elGameOver = document.getElementById('gameover');
-  // (id du bouton dans l’HTML: "go-restart")
   const elGoBtn    = document.getElementById('go-restart');
   elGoBtn && elGoBtn.addEventListener('click', () => {
     hideGameOverOverlay();
@@ -840,7 +965,7 @@
     player.vy = Math.max(player.vy - player.jumpImpulse*0.7, -player.maxVy);
     if (state.lives<=0) {
       state.running=false;
-      submitBestRun(); // envoie le score à la fin du run
+      submitBestRun();
       showGameOverOverlay();
     }
   }
@@ -859,10 +984,8 @@
     drawBubbles();
     drawWhale(player.x(), player.y, player.radius, player.tilt);
 
-    // Brume PNG PAR-DESSUS TOUT
     drawFog();
 
-    // HUD DOM sync
     const sEl = document.getElementById("score");
     const lEl = document.getElementById("lives");
     if (sEl) sEl.textContent = state.score;
@@ -891,7 +1014,7 @@
       const tailPivotX = -w * 0.22;
       const seam = 1;
 
-      // 1) Avant
+      // Avant
       ctx.save();
       ctx.beginPath();
       ctx.rect(tailPivotX - seam, top, (right - tailPivotX) + seam, h);
@@ -899,7 +1022,7 @@
       ctx.drawImage(img, left, top, w, h);
       ctx.restore();
 
-      // 2) Queue
+      // Queue
       ctx.save();
       ctx.translate(tailPivotX, 0);
       ctx.rotate(bend);
@@ -954,7 +1077,7 @@
       ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.fill(); ctx.restore();
     }
 
-    // point lumineux au centre
+    // LED centrale (état)
     const cx = m.x + m.w*0.5;
     const cy = m.y + m.h*0.5;
 
