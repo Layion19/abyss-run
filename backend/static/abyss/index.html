@@ -11,29 +11,31 @@
   <!-- ✅ chemins relatifs -->
   <link rel="stylesheet" href="static/abyss/css/game.css">
   <style>
-    /* ==== Mise en page générale ==== */
-    :root{
-      --brand-yellow:#ffcc00;
-      --brand-blue:#6dd5ff;
-    }
+    :root{ --brand-yellow:#ffcc00; --brand-blue:#6dd5ff; }
     html,body{ margin:0; padding:0; }
-    .wrap      { max-width: 1400px; margin: 0 auto; padding: 16px; }
+    .wrap{ max-width:1400px; margin:0 auto; padding:16px; }
 
-    /* ==== Carte du jeu ==== */
     .stage{
       background:#0b1427; border:1px solid #1a2a4a; border-radius:14px;
       padding:16px; box-shadow:0 10px 30px rgba(0,0,0,.35);
     }
+
+    /* === CADRE JEU : 16:9, borné par la hauteur de viewport ===
+       - width basée sur (100vh - 200px) pour laisser de la place au titre/HUD
+       - garde aussi 100% de la largeur si plus petit
+    */
     .game-frame{
       position:relative;
-      /* ratio 16:9 borné par la hauteur du viewport (80%) */
-      width: min(100%, calc(100vh * 0.80 * (16 / 9)));
-      margin: 0 auto;
-      display: block;
+      width:min(100%, calc((100vh - 200px) * 16 / 9));
+      max-width:1600px;
+      margin:0 auto;
+      display:block;
       background:#0e172b; border:1px solid #1a2a4a; border-radius:12px; overflow:hidden;
-      touch-action:none; /* réduit les gestuelles navigateur (utile sur mobile) */
+      touch-action:none;
+      aspect-ratio:16/9; /* ratio fixe */
     }
-    /* le canvas suit la largeur du cadre sans déformer l'image */
+
+    /* Le canvas suit 100% du cadre ; un script ajuste les pixels internes */
     #game{ display:block; width:100%; height:auto; }
 
     .below{ margin-top:22px; }
@@ -42,45 +44,33 @@
     .leaders li b{ color:#6dd5ff }
 
     .hud{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px; }
-    .btn{
-      cursor:pointer; background:#132349; color:#e9f2ff;
-      border:1px solid #274173; border-radius:10px; padding:8px 12px;
-    }
+    .btn{ cursor:pointer; background:#132349; color:#e9f2ff; border:1px solid #274173; border-radius:10px; padding:8px 12px; }
     .btn:disabled{ opacity:.55; cursor:not-allowed; }
     .pill{ background:#0e1b35; color:#d9e6ff; border:1px solid #223a67; border-radius:999px; padding:6px 10px; }
 
-    /* ==== Titre ==== */
     .title{ text-align:center; margin-bottom:8px; line-height:1.2; }
     .title .angry{ display:block; font-family:'Bebas Neue',sans-serif; font-size:3.2rem; color:var(--brand-yellow); letter-spacing:2px; }
     .title .abyss{ display:block; font-family:'Orbitron',sans-serif; font-size:1.4rem; color:#6dd5ff; letter-spacing:1px; }
 
-    /* ==== Leaderboard header ==== */
     .board-header{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
     .board-title{ display:flex; align-items:center; gap:10px; }
     .rank-badge{ background:#0e1b35; border:1px solid #223a67; color:#cfe6ff; padding:6px 10px; border-radius:999px; font-size:14px; }
     .actions{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 
-    .btn-x{
-      display:inline-flex; align-items:center; gap:8px;
-      background:#0f1113; color:#fff; border:1px solid #2a2f36;
-      padding:8px 14px; border-radius:10px; cursor:pointer;
-    }
+    .btn-x{ display:inline-flex; align-items:center; gap:8px; background:#0f1113; color:#fff; border:1px solid #2a2f36; padding:8px 14px; border-radius:10px; cursor:pointer; }
     .btn-x:hover{ background:#15191d; }
     .x-icon{ width:16px; height:16px; display:inline-block; }
 
     .btn-outline{ background:transparent; color:#cfe6ff; border:1px solid #274173; }
     .btn-outline:hover{ background:#0e1b35; }
-
     .rank-result{ margin-top:8px; color:#cfe6ff; font-size:14px; display:none; }
 
-    /* ==== Overlay de démarrage ==== */
-    .start-screen{
-      position:absolute; inset:0; z-index:50;
-      pointer-events:auto; background:#000;
-    }
+    /* Overlay start */
+    .start-screen{ position:absolute; inset:0; z-index:50; pointer-events:auto; background:#000; }
     #start-bg{
       position:absolute; inset:0; width:100%; height:100%;
-      object-fit:fill; display:block; z-index:0;
+      object-fit:cover; /* évite la déformation quand le cadre change */
+      display:block; z-index:0;
     }
     .start-ui{
       position:absolute; left:50%; bottom:24px; transform:translateX(-50%);
@@ -91,73 +81,32 @@
     #start-btn{
       display:inline-flex; align-items:center; justify-content:center;
       padding:12px 24px; font-size:20px; line-height:1; font-weight:700;
-      border:none; border-radius:8px; background:var(--brand-yellow); color:#000; cursor:pointer;
-      box-shadow:0 4px 14px rgba(0,0,0,.35);
+      border:none; border-radius:8px; background:var(--brand-yellow); color:#000;
+      cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,.35);
     }
     #start-btn:hover{ filter:brightness(0.95); }
 
-    /* surlignage de mon entrée dans le leaderboard */
     .me b{ color:var(--brand-yellow) !important; }
 
-    /* ==== Overlay Game Over ==== */
-    .gameover{
-      position:absolute; inset:0; z-index:60;
-      display:none; align-items:center; justify-content:center; text-align:center;
-      background:rgba(0,0,0,0.55);
-    }
-    .gameover .box{
-      background:rgba(10,20,40,0.9);
-      border:1px solid #223a67;
-      border-radius:14px;
-      padding:22px 26px;
-      box-shadow:0 10px 30px rgba(0,0,0,.45);
-      max-width: 80%;
-    }
-    .gameover h2{
-      margin:0 0 10px; font-family:'Bebas Neue',sans-serif;
-      font-size:54px; letter-spacing:2px; color:var(--brand-yellow);
-      text-shadow:0 2px 10px rgba(0,0,0,.55);
-    }
+    .gameover{ position:absolute; inset:0; z-index:60; display:none; align-items:center; justify-content:center; text-align:center; background:rgba(0,0,0,0.55); }
+    .gameover .box{ background:rgba(10,20,40,0.9); border:1px solid #223a67; border-radius:14px; padding:22px 26px; box-shadow:0 10px 30px rgba(0,0,0,.45); max-width:80%; }
+    .gameover h2{ margin:0 0 10px; font-family:'Bebas Neue',sans-serif; font-size:54px; letter-spacing:2px; color:var(--brand-yellow); text-shadow:0 2px 10px rgba(0,0,0,.55); }
     .gameover p{ margin:0 0 16px; color:#cfe6ff; }
-    #go-restart{
-      display:inline-flex; align-items:center; justify-content:center;
-      padding:10px 20px; font-size:18px; font-weight:700;
-      border:none; border-radius:8px; background:var(--brand-yellow); color:#000; cursor:pointer;
-      box-shadow:0 4px 14px rgba(0,0,0,.35);
-    }
+    #go-restart{ display:inline-flex; align-items:center; justify-content:center; padding:10px 20px; font-size:18px; font-weight:700; border:none; border-radius:8px; background:var(--brand-yellow); color:#000; cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,.35); }
     #go-restart:hover{ filter:brightness(0.95); }
 
-    /* ==== Couche tactile mobile (paysage uniquement) ==== */
-    .touch-layer{
-      position:absolute; inset:0; z-index:55; display:none; /* visible seulement en mobile paysage */
-      pointer-events:auto;
-    }
-    .touch-half{
-      position:absolute; left:0; width:100%; height:50%;
-      touch-action:none;
-    }
-    .touch-top{ top:0; }
-    .touch-bottom{ bottom:0; }
+    .touch-layer{ position:absolute; inset:0; z-index:55; display:none; pointer-events:auto; }
+    .touch-half{ position:absolute; left:0; width:100%; height:50%; touch-action:none; }
+    .touch-top{ top:0; } .touch-bottom{ bottom:0; }
     .touch-layer.active .touch-top{ background:rgba(255,255,255,0.02); }
     .touch-layer.active .touch-bottom{ background:rgba(255,255,255,0.02); }
 
-    /* ==== Alerte orientation mobile ==== */
-    .rotate-hint{
-      position:fixed; inset:0; background:rgba(0,0,0,.82); color:#fff;
-      display:none; align-items:center; justify-content:center; text-align:center;
-      padding:24px; z-index:999999;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-    }
-    .rotate-hint .box{
-      background:#0f1a30; border:1px solid #233a67; border-radius:12px; padding:18px 22px;
-      max-width:540px;
-    }
+    .rotate-hint{ position:fixed; inset:0; background:rgba(0,0,0,.82); color:#fff; display:none; align-items:center; justify-content:center; text-align:center; padding:24px; z-index:999999; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    .rotate-hint .box{ background:#0f1a30; border:1px solid #233a67; border-radius:12px; padding:18px 22px; max-width:540px; }
     .rotate-hint b{ color:var(--brand-yellow); }
-
-    /* si caché → ne capte pas les clics */
     .rotate-hint[aria-hidden="true"]{ display:none !important; pointer-events:none !important; }
 
-    @media (max-width: 900px){
+    @media (max-width:900px){
       .wrap{ padding:12px; }
       .title .angry{ font-size:2.4rem; }
       .title .abyss{ font-size:1.1rem; }
@@ -165,7 +114,7 @@
   </style>
 </head>
 <body>
-  <!-- Alerte orient. mobile (affichée UNIQUEMENT sur mobile/tablette via JS) -->
+  <!-- Alerte orientation mobile (affichée via JS seulement sur mobile) -->
   <div id="rotateHint" class="rotate-hint" aria-hidden="true">
     <div class="box">
       <p style="margin:0 0 6px;">For a better experience, please rotate your phone.</p>
@@ -185,7 +134,6 @@
       <div class="game-frame" id="gameFrame">
         <!-- Overlay de démarrage -->
         <div id="start-screen" class="start-screen">
-          <!-- ✅ chemin relatif -->
           <img id="start-bg" src="static/abyss/img/start-screen.png" alt="">
           <div class="start-ui">
             <p class="start-hints">P = Play • SPACE = Jump • SHIFT = Boost • ↑/↓ = Move • R = Restart</p>
@@ -196,7 +144,7 @@
         <!-- Canvas -->
         <canvas id="game" width="1280" height="720"></canvas>
 
-        <!-- ✅ Overlay Game Over -->
+        <!-- Overlay Game Over -->
         <div id="gameover" class="gameover" aria-hidden="true">
           <div class="box">
             <h2>GAME OVER</h2>
@@ -205,13 +153,14 @@
           </div>
         </div>
 
-        <!-- ✅ Couche tactile (mobile paysage) -->
+        <!-- Couche tactile (mobile paysage) -->
         <div id="touchLayer" class="touch-layer" aria-hidden="true">
           <div id="touchTop" class="touch-half touch-top"></div>
           <div id="touchBottom" class="touch-half touch-bottom"></div>
         </div>
       </div>
 
+      <!-- HUD -->
       <div class="hud">
         <button id="play" class="btn" disabled>▶️ Play</button>
         <button id="restart" class="btn">🔄 Restart</button>
@@ -238,7 +187,6 @@
           <span id="rankBadge" class="rank-badge">Rank: —</span>
         </div>
         <div class="actions">
-          <!-- ✅ chemins relatifs -->
           <button id="showRankBtn" class="btn btn-outline" type="button">Your rank</button>
           <button id="connectXBtn" class="btn-x" type="button" aria-pressed="false">
             <svg class="x-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -259,7 +207,58 @@
   <!-- ton jeu (✅ chemin relatif) -->
   <script src="static/abyss/js/game.js"></script>
 
-  <!-- Script UI + intégration backend -->
+  <!-- === Synchronisation stricte du canvas avec le cadre (NO DPR scaling) === -->
+  <script>
+    (function syncCanvasToFrame(){
+      const frame  = document.getElementById('gameFrame');
+      const canvas = document.getElementById('game');
+      if (!frame || !canvas) return;
+
+      const ASPECT = 16/9;
+
+      function applySize() {
+        const fw = Math.max(320, Math.floor(frame.clientWidth));
+        const fh = Math.floor(fw / ASPECT);
+
+        // CSS (affichage)
+        canvas.style.width  = fw + 'px';
+        canvas.style.height = 'auto'; // l'aspect-ratio du cadre fixe la hauteur affichée
+
+        // Pixels internes = taille CSS (pas de * devicePixelRatio *)
+        // => tout le gameplay (positions/vitesses) suit la réduction
+        canvas.width  = fw;
+        canvas.height = fh;
+
+        // Notifie le jeu si besoin (game.js écoute "resize")
+        window.dispatchEvent(new Event('resize'));
+      }
+
+      // 1) Au chargement
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', applySize, {once:true});
+      } else {
+        applySize();
+      }
+
+      // 2) Sur redimensionnement de la frame uniquement
+      let ro;
+      try {
+        ro = new ResizeObserver(() => applySize());
+        ro.observe(frame);
+      } catch(_) {
+        // fallback
+        window.addEventListener('resize', applySize);
+        window.addEventListener('orientationchange', () => setTimeout(applySize, 60));
+      }
+
+      // 3) Sécurité navigation onglet
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) setTimeout(applySize, 60);
+      });
+    })();
+  </script>
+
+  <!-- === Script UI + intégration backend (inchangé) === -->
   <script>
     // ---------- Helpers ----------
     const qs = id => document.getElementById(id);
@@ -304,7 +303,6 @@
     }
 
     // ---------- Boutons ----------
-    // ✅ chemins relatifs (pas de / au début)
     connectBtn?.addEventListener('click', () => { location.href='auth/x/login'; });
     rankBtn?.addEventListener('click', async () => {
       const { player_id } = getIdentity();
@@ -319,7 +317,7 @@
       }catch(e){ console.error(e); alert('Unable to fetch rank right now.'); }
     });
 
-    // ---------- Leaderboard (Top 100 + surbrillance joueur) ----------
+    // ---------- Leaderboard ----------
     async function refreshLeaders(){
       try{
         const r = await fetch('api/leaderboard');
@@ -357,7 +355,7 @@
           (row.display && myTag && row.display.toLowerCase() === myTag);
 
         li.className = isMe ? 'me' : '';
-        li.innerHTML=`${idx+1}. <b>${name}</b> — XP: ${xp} — Score: ${score} — Lvl: ${level}`;
+        li.innerHTML = `${idx+1}. <b>${name}</b> — XP: ${xp} — Score: ${score} — Lvl: ${level}`;
         leadersOl.appendChild(li);
       });
     }
@@ -366,7 +364,7 @@
     (function start(){
       applyConnectedUI();
       refreshLeaders();
-      setInterval(refreshLeaders, 3000000);
+      setInterval(refreshLeaders, 3000000); // intervalle long comme avant
     })();
 
     // ---------- Overlay Start → démarre le jeu ----------
@@ -396,7 +394,7 @@
       });
     })();
 
-    // ================== TOUT CE QUI SUIT NE S'ACTIVE QUE SUR MOBILE/TABLETTE ==================
+    // ================== BLOC SPÉCIFIQUE MOBILE/TABLETTE ==================
     (function(){
       const ua = navigator.userAgent || '';
       const isMobileUA  = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
@@ -404,8 +402,7 @@
       const isMobileLike= isMobileUA || hasTouch;
 
       if (!isMobileLike) {
-        // Desktop/laptop : on ne câble rien de mobile pour éviter les lags et les surcharges.
-        // On s'assure aussi que les overlays mobiles soient désactivés.
+        // Desktop/laptop : on ne câble rien de mobile pour éviter les lags et surcharges.
         const rotateHint = qs('rotateHint');
         rotateHint && (rotateHint.style.display = 'none');
         const touchLayer = qs('touchLayer');
@@ -428,7 +425,7 @@
         touchLayer.setAttribute('aria-hidden', show ? 'false' : 'true');
       }
 
-      // On émet des CustomEvents vers game.js
+      // CustomEvents vers game.js
       function emitGameEvent(name, detail){ document.dispatchEvent(new CustomEvent(name, { detail })); }
 
       function bindHold(el, actionDown, actionUp){
@@ -475,7 +472,7 @@
       window.addEventListener('resize', updateRotateHint);
       window.addEventListener('orientationchange', updateRotateHint);
     })();
-    // ================== FIN BLOC SPÉCIFIQUE MOBILE ==================
+    // ================== FIN BLOC MOBILE ==================
   </script>
 </body>
 </html>
