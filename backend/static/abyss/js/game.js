@@ -1,6 +1,9 @@
 // ================= Angry Whales — Abyss Run (game.js) =====================
 // Fond "Water.png" défilant (strip). Optis : halos d’orbes limités, explosions x0.5,
 // bulles -10%, écritures DOM/audio seulement si valeur change.
+// Règles bonus (par run, sans pré-tirage) :
+//   - SILVER : 100 XP → 15% ; 600 XP → 45% (si pas déjà apparu)
+//   - GOLD   : 1000 XP → 8% ; 1500 XP → 15% (si pas déjà apparu)
 // ==========================================================================
 
 (function () {
@@ -43,6 +46,7 @@
     running: false,
     score: 0,
     lives: 4,
+    maxLives: 6, // cap de vies
     elapsed: 0,
     baseSpeed: 240,
     rng: mulberry32(Date.now() & 0xffffffff),
@@ -58,14 +62,17 @@
     chestMaxPerRun: 5,
     chestOnScreenMax: 2,
 
-    // BONUS (tirages dynamiques par run)
-    bonusSpawned: false,               // SILVER déjà spawné ?
-    legendarySpawned: false,           // GOLD déjà spawné ?
-    // Timers et paliers d'essai
-    silverCheckTimer: 0,
-    goldCheckTimer: 0,
-    silverTierTried: 0,                // 0=none, 1=100..599, 2=600+
-    goldTierTried: 0,                  // 0=none, 1=1000..1499, 2=1500+
+    // BONUS (par run, sans pré-tirage : tirages aux paliers de score)
+    // Silver
+    silverSpawned: false,
+    silverChecked100: false,   // on a déjà tiré à 100?
+    silverChecked600: false,   // on a déjà tiré à 600?
+    silverPendingAtScore: null, // si un tirage a réussi, score où spawn
+    // Gold
+    goldSpawned: false,
+    goldChecked1000: false,
+    goldChecked1500: false,
+    goldPendingAtScore: null,
 
     // Dispo/éligibilité (côté serveur) — fallback permissif
     bonusAvailable: { silver: true, gold: true },
@@ -298,15 +305,19 @@
   btnRestart && btnRestart.addEventListener("click", () => { hideGameOverOverlay(); resetGame(); });
 
   async function startRun(){
-    // ⚠️ Plus de pré-tirage : les chances sont évaluées dynamiquement dans update()
-    // Récupère dispo/eligibilité (non bloquant)
+    // Récupère dispo/éligibilité (non bloquant)
     refreshBonusFlags();
 
-    // Reset des timers de bonus dynamiques
-    state.silverCheckTimer = 0;
-    state.goldCheckTimer   = 0;
-    state.silverTierTried  = 0;
-    state.goldTierTried    = 0;
+    // (re)mise à zéro des tirages de la run (on n’utilise plus de pré-tirage)
+    state.silverSpawned = false;
+    state.silverChecked100 = false;
+    state.silverChecked600 = false;
+    state.silverPendingAtScore = null;
+
+    state.goldSpawned = false;
+    state.goldChecked1000 = false;
+    state.goldChecked1500 = false;
+    state.goldPendingAtScore = null;
 
     state.running = true;
     try { if (musicEnabled) audio.bgm.play(); } catch {}
@@ -327,12 +338,8 @@
     _lastMineY = null;
 
     // Reset bonus par run
-    state.bonusSpawned=false;
-    state.legendarySpawned=false;
-    state.silverCheckTimer = 0;
-    state.goldCheckTimer   = 0;
-    state.silverTierTried  = 0;
-    state.goldTierTried    = 0;
+    state.silverSpawned=false; state.silverChecked100=false; state.silverChecked600=false; state.silverPendingAtScore=null;
+    state.goldSpawned=false; state.goldChecked1000=false; state.goldChecked1500=false; state.goldPendingAtScore=null;
 
     state.bonusAvailable = { silver:true, gold:true };
     state.bonusEligible  = { silver:true, gold:true };
@@ -568,13 +575,46 @@
     bonus2Sprite = new Image(); bonus2Sprite.src = "static/abyss/img/bonus2.png";
   })();
 
+  // ---------- BONUS draw ----------
+  function drawBonus(b){
+    const t = state.elapsed;
+    const bob = Math.sin(t * 2 + (b.y * 0.05)) * 4;
+    const x = b.x, y = b.y + bob, s = b.s;
+
+    // halo léger
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    const g = ctx.createRadialGradient(x + s*0.5, y + s*0.5, 0, x + s*0.5, y + s*0.5, s*0.9);
+    if (b.type === "legendary") g.addColorStop(0, "rgba(255,215,80,0.7)");
+    else                        g.addColorStop(0, "rgba(180,220,255,0.6)");
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x + s*0.5, y + s*0.5, s*0.9, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+
+    // sprite
+    const img = (b.type === "legendary") ? bonusSprite : bonus2Sprite;
+    if (img && img.complete) {
+      ctx.drawImage(img, x, y, s, s);
+    } else {
+      // fallback simple
+      ctx.save();
+      ctx.translate(x + s/2, y + s/2);
+      ctx.fillStyle = (b.type === "legendary") ? "#ffd24a" : "#c0d8ff";
+      ctx.beginPath();
+      ctx.arc(0, 0, s*0.42, 0, Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
   // ---------- BONUS spawn ----------
   function spawnBonus(type){
     const s = 44 * (W()/820);
     const y = rand(70, H()-70);
     bonuses.push({ type, x: W()+80, y, s, vx: -worldSpeed() });
-    if (type === 'legendary') state.legendarySpawned = true;
-    if (type === 'bonus2')    state.bonusSpawned = true;
+    if (type === 'legendary') state.goldSpawned = true;
+    if (type === 'bonus2')    state.silverSpawned = true;
   }
 
   // ---------- Explosions (×0.5) ----------
@@ -793,20 +833,6 @@
     return true;
   }
 
-  // ---------- Helpers proba bonus ----------
-  function silverTier(xp){
-    if (xp >= 600) return 2;
-    if (xp >= 100) return 1;
-    return 0;
-  }
-  function goldTier(xp){
-    if (xp >= 1500) return 2;
-    if (xp >= 1000) return 1;
-    return 0;
-  }
-  function silverProbForTier(t){ return t===2 ? 0.45 : t===1 ? 0.15 : 0; }
-  function goldProbForTier(t){ return t===2 ? 0.15 : t===1 ? 0.08 : 0; }
-
   // ---------- Update ----------
   function update(dt){
     state.elapsed += dt;
@@ -890,39 +916,48 @@
       state.chestTimer = (Math.random()*(18-10)+10) / (1 + d*0.25);
     }
 
-    // ----- BONUS (chances dynamiques) -----
-    // Timers de (re)tentative
-    state.silverCheckTimer += dt;
-    state.goldCheckTimer   += dt;
+    // ----- BONUS (tirages aux paliers de score) -----
+    const xp = state.score|0;
 
-    // SILVER : 100–599 → 15% ; ≥600 → 45%
-    if (!state.bonusSpawned && state.bonusAvailable.silver && state.bonusEligible.silver){
-      const tier = silverTier(state.score|0);
-      if (tier > 0){
-        const p = silverProbForTier(tier);
-        const tierChanged = tier > state.silverTierTried;
-        const timeForRetry = state.silverCheckTimer >= 30; // re-essai toutes les 30s si pas encore spawné
-        if (tierChanged || timeForRetry){
-          if (Math.random() < p) spawnBonus('bonus2');
-          state.silverTierTried = Math.max(state.silverTierTried, tier);
-          state.silverCheckTimer = 0;
+    // SILVER : 100 → 15% ; 600 → 45% (si pas déjà apparu)
+    if (!state.silverSpawned && state.bonusAvailable.silver && state.bonusEligible.silver){
+      if (!state.silverChecked100 && xp >= 100){
+        state.silverChecked100 = true;
+        if (Math.random() < 0.15) {
+          // apparition différée dans ~80..220 XP
+          state.silverPendingAtScore = xp + Math.floor(80 + Math.random()*140);
+        }
+      }
+      if (!state.silverSpawned && !state.silverChecked600 && xp >= 600){
+        state.silverChecked600 = true;
+        if (Math.random() < 0.45) {
+          state.silverPendingAtScore = xp + Math.floor(80 + Math.random()*160);
         }
       }
     }
+    if (!state.silverSpawned && state.silverPendingAtScore != null && xp >= state.silverPendingAtScore){
+      spawnBonus('bonus2'); // SILVER
+      state.silverPendingAtScore = null;
+    }
 
-    // GOLD : ≥1000 → 8% ; ≥1500 → 15%
-    if (!state.legendarySpawned && state.bonusAvailable.gold && state.bonusEligible.gold){
-      const tier = goldTier(state.score|0);
-      if (tier > 0){
-        const p = goldProbForTier(tier);
-        const tierChanged = tier > state.goldTierTried;
-        const timeForRetry = state.goldCheckTimer >= 30; // re-essai toutes les 30s si pas encore spawné
-        if (tierChanged || timeForRetry){
-          if (Math.random() < p) spawnBonus('legendary');
-          state.goldTierTried = Math.max(state.goldTierTried, tier);
-          state.goldCheckTimer = 0;
+    // GOLD : 1000 → 8% ; 1500 → 15% (si pas déjà apparu)
+    if (!state.goldSpawned && state.bonusAvailable.gold && state.bonusEligible.gold){
+      if (!state.goldChecked1000 && xp >= 1000){
+        state.goldChecked1000 = true;
+        if (Math.random() < 0.08) {
+          state.goldPendingAtScore = xp + Math.floor(100 + Math.random()*180);
         }
       }
+      if (!state.goldSpawned && !state.goldChecked1500 && xp >= 1500){
+        state.goldChecked1500 = true;
+        if (Math.random() < 0.15) {
+          state.goldPendingAtScore = xp + Math.floor(100 + Math.random()*200);
+        }
+      }
+    }
+    if (!state.goldSpawned && state.goldPendingAtScore != null && xp >= state.goldPendingAtScore){
+      spawnBonus('legendary'); // GOLD
+      state.goldPendingAtScore = null;
     }
 
     // monde → gauche
@@ -990,8 +1025,19 @@
       }
     }
 
-    // Cœurs
-    for (let i=hearts.length-1;i>=0;i--){ hearts[i].x = (hearts[i].x||0) + vx; if(hearts[i].x<-70) hearts.splice(i,1); }
+    // Cœurs (mouvement + collision)
+    for (let i=hearts.length-1;i>=0;i--){
+      const h = hearts[i];
+      h.x = (h.x||0) + vx;
+      if (h.x < -70){ hearts.splice(i,1); continue; }
+      // collision
+      const cx = h.x + h.s*0.5, cy = h.y + h.s*0.5, rr = Math.max(12, h.s*0.35);
+      if (circleHit(player.x(),player.y,player.radius, cx, cy, rr)){
+        hearts.splice(i,1);
+        if (state.lives < state.maxLives) state.lives += 1;
+        playSfx(audio.heart, 1.0);
+      }
+    }
 
     // collisions orbes
     for (let i=orbs.length-1;i>=0;i--){
