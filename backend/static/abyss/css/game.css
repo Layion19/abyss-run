@@ -1,0 +1,144 @@
+/* ================= Angry Whales – game.css (clean version) ================== */
+:root{
+  --bg:#0b1220;
+  --fg:#e8f1ff;
+  --panel:#0b1427;
+  --panel2:#0e172b;
+  --line:#1a2a4a;
+  --accent:#6dd5ff;
+  --accent2:#4cafb0;
+  --danger:#ff6b6b;
+}
+
+/* Base */
+html,body{
+  height:100%;
+  margin:0;
+  background:var(--bg);
+  color:var(--fg);
+  font-family:system-ui, Segoe UI, Roboto, Ubuntu, Inter, sans-serif;
+}
+#wrap{display:block}
+h1{font-size:24px; margin:8px 0 0}
+.sub{opacity:.85; font-size:14px; margin:0 0 12px}
+
+/* Layout général */
+.wrap{
+  max-width:1400px;
+  margin:0 auto;
+  padding:16px;
+}
+.stage{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:16px;
+  box-shadow:none; /* ❌ ombre supprimée */
+}
+
+/* ===================== CADRE DU JEU ===================== */
+.game-frame{
+  position:relative;
+  width:100%;
+  max-width:1600px;
+  aspect-ratio:16/9;
+  overflow:hidden;
+  background:var(--panel2);
+  border:1px solid var(--line);
+  border-radius:12px;
+}
+
+/* Canvas uni, plus de dégradé */
+.game-frame > canvas{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  display:block;
+  box-sizing:border-box;
+  border:0;
+  border-radius:0;
+  background:var(--panel2); /* ✅ Uni, plus de gradient ni effet vague */
+}
+
+/* =============== HUD & BOUTONS =============== */
+.hud{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  flex-wrap:wrap;
+  margin-top:10px;
+}
+.btn{
+  appearance:none;
+  border:0;
+  padding:10px 14px;
+  border-radius:12px;
+  background:#1a2a4a;
+  color:var(--fg);
+  cursor:pointer;
+  font-weight:600;
+  filter:none; /* ❌ plus d'effet hover */
+}
+.btn:hover{ filter:none; }
+.pill{
+  padding:8px 12px;
+  border-radius:999px;
+  background:#12203d;
+  font-size:12px;
+}
+.hint{ opacity:.7; font-size:12px; }
+
+/* ============ OVERLAY DE DÉMARRAGE ============ */
+#start-screen{
+  position:absolute;
+  inset:0;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  align-items:center;
+  padding:24px;
+  background:transparent; /* ❌ plus d'assombrissement */
+  backdrop-filter:none;   /* ❌ blur retiré */
+  z-index:10;
+}
+#start-screen[hidden]{ display:none !important; }
+
+.start-logo{
+  max-width:80%;
+  height:auto;
+  margin:0 auto 20px;
+  display:block;
+  filter:none; /* ❌ drop-shadow retiré */
+}
+
+.start-btn{
+  padding:12px 24px;
+  font-size:20px;
+  cursor:pointer;
+  border:none;
+  border-radius:10px;
+  background:#ffcc00;
+  color:#0b0b0b;
+  font-weight:800;
+  box-shadow:none; /* ❌ ombre retirée */
+  transition:transform .12s ease, filter .12s ease;
+}
+.start-btn:hover{ transform:translateY(-1px); filter:none; }
+.start-btn:active{ transform:translateY(0); filter:none; }
+
+.start-controls{
+  margin-top:16px;
+  font-size:15px;
+  text-align:center;
+  line-height:1.6;
+  color:#eaf2ff;
+  opacity:.95;
+  text-shadow:none; /* ❌ retiré */
+}
+
+/* Petits écrans */
+@media (max-width: 640px){
+  .start-btn{ font-size:18px; padding:10px 20px; }
+  .start-controls{ font-size:14px; }
+}

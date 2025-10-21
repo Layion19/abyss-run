@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Angry Whales — Abyss Run</title>
+
+  <!-- Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Orbitron:wght@500&display=swap" rel="stylesheet">
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="static/abyss/css/game.css">
+  <link rel="icon" href="static/abyss/img/favicon.ico">
+  <style>
+    :root{ --brand-yellow:#ffcc00; --brand-blue:#6dd5ff; }
+    html,body{ margin:0; padding:0; }
+    .wrap{ max-width:1400px; margin:0 auto; padding:16px; }
+
+    .stage{
+      background:#0b1427; border:1px solid #1a2a4a; border-radius:14px;
+      padding:16px; box-shadow:0 10px 30px rgba(0,0,0,.35);
+    }
+
+    .game-frame{
+      position:relative;
+      width:min(100%, calc((100vh - 200px) * 16 / 9));
+      max-width:1600px;
+      margin:0 auto;
+      display:block;
+      background:#0e172b; border:1px solid #1a2a4a; border-radius:12px; overflow:hidden;
+      touch-action:none;
+      aspect-ratio:16/9;
+    }
+    #game{ display:block; width:100%; height:auto; }
+
+    .below{ margin-top:22px; }
+    .card{ background:#101a31; border:1px solid #1a2a4a; border-radius:12px; padding:14px; }
+
+    .hud{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px; }
+    .btn{ cursor:pointer; background:#132349; color:#e9f2ff; border:1px solid #274173; border-radius:10px; padding:8px 12px; }
+    .btn:disabled{ opacity:.55; cursor:not-allowed; }
+    .pill{ background:#0e1b35; color:#d9e6ff; border:1px solid #223a67; border-radius:999px; padding:6px 10px; }
+
+    .title{ text-align:center; margin-bottom:8px; line-height:1.2; }
+    .title .angry{ display:block; font-family:'Bebas Neue',sans-serif; font-size:3.2rem; color:var(--brand-yellow); letter-spacing:2px; }
+    .title .abyss{ display:block; font-family:'Orbitron',sans-serif; font-size:1.4rem; color:#6dd5ff; letter-spacing:1px; }
+    .sub{ opacity:.9; text-align:center; margin:0 0 10px; }
+
+    .board-header{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
+    .board-title{ display:flex; align-items:center; gap:10px; }
+    .rank-badge{ background:#0e1b35; border:1px solid #223a67; color:#cfe6ff; padding:6px 10px; border-radius:999px; font-size:14px; cursor:pointer; }
+    .actions{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+
+    .rank-summary{ display:inline-block; margin-top:6px; }
+
+    /* ===== Leaderboard rows (wallet à droite, cliquable) ===== */
+    .leaders{ list-style:none; margin:10px 0 0; padding:0; }
+    .leaders li{
+      display:flex; align-items:center; justify-content:space-between;
+      gap:10px; padding:8px 0; border-bottom:1px solid rgba(255,255,255,.06);
+      font-size:15px;
+    }
+    .leaders .left{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .leaders .right{ margin-left:12px; white-space:nowrap; }
+    .leaders .wallet{ color:#6dd5ff; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; cursor:pointer; }
+    .leaders .wallet:hover{ text-decoration:underline; }
+    .leaders li.me .left b{ color:var(--brand-yellow); }
+
+    .start-screen{ position:absolute; inset:0; z-index:50; pointer-events:auto; background:#000; }
+    #start-bg{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block; z-index:0; }
+    .start-ui{
+      position:absolute; left:50%; bottom:24px; transform:translateX(-50%);
+      display:flex; flex-direction:column; gap:12px; align-items:center; text-align:center;
+      color:#fff; text-shadow:0 2px 6px rgba(0,0,0,.55); pointer-events:auto; z-index:1;
+    }
+    .start-hints{ font-size:16px; line-height:1.6; margin:0; opacity:.95; white-space:nowrap; }
+    #start-btn{
+      display:inline-flex; align-items:center; justify-content:center;
+      padding:12px 24px; font-size:20px; line-height:1; font-weight:700;
+      border:none; border-radius:8px; background:var(--brand-yellow); color:#000;
+      cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,.35);
+    }
+
+    .gameover{ position:absolute; inset:0; z-index:60; display:none; align-items:center; justify-content:center; text-align:center; background:rgba(0,0,0,0.55); }
+    .gameover .box{ background:rgba(10,20,40,0.9); border:1px solid #223a67; border-radius:14px; padding:22px 26px; box-shadow:0 10px 30px rgba(0,0,0,.45); max-width:80%; }
+    .gameover h2{ margin:0 0 10px; font-family:'Bebas Neue',sans-serif; font-size:54px; letter-spacing:2px; color:var(--brand-yellow); text-shadow:0 2px 10px rgba(0,0,0,.55); }
+    .gameover p{ margin:0 0 16px; color:#cfe6ff; }
+
+    .touch-layer{ position:absolute; inset:0; z-index:55; display:none; pointer-events:auto; }
+    .touch-half{ position:absolute; left:0; width:100%; height:50%; touch-action:none; }
+    .touch-top{ top:0; } .touch-bottom{ bottom:0; }
+
+    .rotate-hint{ position:fixed; inset:0; background:rgba(0,0,0,.82); color:#fff; display:none; align-items:center; justify-content:center; text-align:center; padding:24px; z-index:999999; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    .rotate-hint .box{ background:#0f1a30; border:1px solid #233a67; border-radius:12px; padding:18px 22px; max-width:540px; }
+    .rotate-hint b{ color:var(--brand-yellow); }
+
+    @media (max-width:900px){
+      .wrap{ padding:12px; }
+      .title .angry{ font-size:2.4rem; }
+      .title .abyss{ font-size:1.1rem; }
+    }
+
+    /* =================== Bonuses strip (entre jeu et leaderboard) =================== */
+    .bonus-strip{
+      margin-top:22px;        /* espace par rapport au jeu */
+      margin-bottom:22px;     /* avant le leaderboard */
+      padding:14px 16px;
+      background:#101a31;     /* fond discret */
+      border:0;               /* sans trait */
+      border-radius:12px;
+      color:#e8f1ff;
+      text-align:center;
+    }
+    .bonus-strip h3{
+      margin:0 0 10px;
+      font-size:1.6rem;
+      font-family:'Bebas Neue',sans-serif;
+      letter-spacing:.5px;
+      color:#ffcc00;
+    }
+    .bonus-list{
+      display:flex;
+      flex-wrap:wrap;
+      gap:12px 16px;
+      justify-content:center;
+    }
+    .bonus-item{
+      min-width:240px;
+      padding:8px 12px;
+      background:#0b1427;
+      border-radius:10px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+    }
+    .bonus-left{ display:flex; align-items:center; gap:8px; }
+    .dot{ width:10px; height:10px; border-radius:50%; background:#bcd4ff; display:inline-block; }
+    .dot.gold{ background:#ffd24d; }
+    .dot.platinum{ background:#b0b0ff; }
+    .bonus-name{ font-weight:700; }
+    .bonus-right{ text-align:right; }
+    .bonus-count{ font-weight:800; display:block; }
+    .bonus-reward{ font-size:12px; opacity:.85; }
+
+    @media (max-width:900px){
+      .bonus-item{ min-width:unset; width:100%; }
+    }
+  </style>
+</head>
+<body>
+  <div id="rotateHint" class="rotate-hint" aria-hidden="true">
+    <div class="box">
+      <p style="margin:0 0 6px;">For a better experience, please rotate your phone.</p>
+      <p style="margin:0;"><b>Landscape mode</b> is required to play.</p>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <h1 class="title">
+      <span class="angry">Angry Whales</span>
+      <span class="abyss">Abyss Run</span>
+    </h1>
+    <p class="sub">Survive the abyss, collect orbs, uncover hidden bonuses, and rule the leaderboard 🏆</p>
+
+    <!-- ======= GAME ======= -->
+    <section id="stage" class="stage">
+      <div class="game-frame" id="gameFrame">
+        <div id="start-screen" class="start-screen">
+          <img id="start-bg" src="static/abyss/img/start-screen.png" alt="">
+          <div class="start-ui">
+            <p class="start-hints">P = Play • SPACE = Jump • SHIFT = Boost • ↑/↓ = Move • R = Restart</p>
+            <button id="start-btn">▶ Play</button>
+          </div>
+        </div>
+
+        <canvas id="game" width="1280" height="720"></canvas>
+
+        <div id="gameover" class="gameover" aria-hidden="true">
+          <div class="box">
+            <h2>GAME OVER</h2>
+            <p>Try again and beat your best score!</p>
+            <button id="go-restart" type="button">🔄 Restart</button>
+          </div>
+        </div>
+
+        <div id="touchLayer" class="touch-layer" aria-hidden="true">
+          <div id="touchTop" class="touch-half touch-top"></div>
+          <div id="touchBottom" class="touch-half touch-bottom"></div>
+        </div>
+      </div>
+
+      <!-- HUD -->
+      <div class="hud">
+        <button id="play" class="btn" disabled>▶️ Play</button>
+        <button id="restart" class="btn">🔄 Restart</button>
+
+        <span class="pill">
+          🎵 Music:
+          <input id="musicToggle" type="range" min="0" max="100" value="60" style="vertical-align:middle;">
+          <span id="musicVol">100%</span>
+        </span>
+
+        <button id="music" class="btn" aria-pressed="true">🎵 Music: On</button>
+        <button id="sfx" class="btn" aria-pressed="true">🔊 SFX: On</button>
+
+        <span class="pill">🪙 Score: <b id="score">0</b></span>
+        <span class="pill">❤️ Lives: <b id="lives">4</b></span>
+      </div>
+    </section>
+
+    <!-- ======= BONUS INFO SECTION (entre le jeu et le leaderboard) ======= -->
+    <section class="bonus-strip" aria-live="polite">
+      <h3>🎯 Active Bonuses</h3>
+      <div class="bonus-list">
+        <!-- Silver -->
+        <div class="bonus-item">
+          <div class="bonus-left">
+            <span class="dot"></span>
+            <span class="bonus-name">Silver</span>
+          </div>
+          <div class="bonus-right">
+            <span class="bonus-count" id="silverCount">20</span>
+            <span class="bonus-reward">🎁 Random ETH drop</span>
+          </div>
+        </div>
+        <!-- Gold -->
+        <div class="bonus-item">
+          <div class="bonus-left">
+            <span class="dot gold"></span>
+            <span class="bonus-name">Gold</span>
+          </div>
+          <div class="bonus-right">
+            <span class="bonus-count" id="goldCount">1</span>
+            <span class="bonus-reward">🐇 1× Stoned Rabbits</span>
+          </div>
+        </div>
+        <!-- Platinum -->
+        <div class="bonus-item">
+          <div class="bonus-left">
+            <span class="dot platinum"></span>
+            <span class="bonus-name">Platinum</span>
+          </div>
+          <div class="bonus-right">
+            <span class="bonus-count">—</span>
+            <span class="bonus-reward"><em>Coming Soon …</em></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======= LEADERBOARD ======= -->
+    <section class="below card">
+      <div class="board-header">
+        <div class="board-title">
+          <h3 style="margin:0">🏆 Leaderboard</h3>
+        </div>
+        <div class="actions">
+          <button id="showRankBtn" class="btn btn-outline" type="button">Your rank</button>
+          <span id="rankBadge" class="rank-badge" title="Click to copy your wallet">Rank: —</span>
+        </div>
+      </div>
+
+      <!-- Sous-barre avec Rank / XP / Bonus -->
+      <div class="pill rank-summary" id="rankSummary">Rank: — · XP: — · Bonus: 🥇 0 · 🥈 0</div>
+
+      <ol id="leaders" class="leaders"><li>No entries yet.</li></ol>
+      <p class="hint">Sorted by XP first, then score. Auto-refresh (5 min).</p>
+
+      <div id="rankResult" class="rank-result" style="display:none;">Your rank: <b>—</b></div>
+    </section>
+  </div>
+
+  <!-- Wallet gate (avant le jeu) -->
+  <script type="module" src="static/abyss/js/wallet.js"></script>
+  <!-- Game -->
+  <script src="static/abyss/js/game.js"></script>
+
+  <!-- Canvas sizing -->
+  <script>
+    (function syncCanvasToFrame(){
+      const frame  = document.getElementById('gameFrame');
+      const canvas = document.getElementById('game');
+      if (!frame || !canvas) return;
+      const ASPECT = 16/9;
+
+      function applySize() {
+        const fw = Math.max(320, Math.floor(frame.clientWidth));
+        const fh = Math.floor(fw / ASPECT);
+        canvas.style.width  = fw + 'px';
+        canvas.style.height = 'auto';
+        canvas.width  = fw;
+        canvas.height = fh;
+        window.dispatchEvent(new Event('resize'));
+      }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', applySize, {once:true});
+      } else { applySize(); }
+      try { new ResizeObserver(applySize).observe(frame); } catch(_) {
+        window.addEventListener('resize', applySize);
+        window.addEventListener('orientationchange', () => setTimeout(applySize, 60));
+      }
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(applySize, 60); });
+    })();
+  </script>
+
+  <!-- UI + backend wiring -->
+  <script>
+    // ---------- Helpers ----------
+    const qs = id => document.getElementById(id);
+    const leadersOl  = qs('leaders');
+    const rankBadge  = qs('rankBadge');
+    const rankBtn    = qs('showRankBtn');
+    const rankSummary= qs('rankSummary');
+
+    function wallet(){ return localStorage.getItem('walletAddress') || null; }
+    async function safeJson(url){
+      const r = await fetch(url).catch(()=>null);
+      if (!r || !r.ok) return null;
+      try{ return await r.json(); }catch{ return null; }
+    }
+
+    // ---------- Bonuses strip refresh (optionnel si endpoint dispo) ----------
+    async function refreshBonusPanel(){
+      const d = await safeJson('api/bonus/remaining'); // {silver, gold, platinum?}
+      if (!d) return;
+      const s = qs('silverCount'); if (s && d.silver!=null) s.textContent = d.silver;
+      const g = qs('goldCount');   if (g && d.gold  !=null) g.textContent = d.gold;
+      // Platinum reste "Coming Soon …"
+    }
+
+    // ---------- Fallback instantané si pas d'API "remaining" ----------
+    document.addEventListener('aw:bonusClaimed', (e) => {
+      const t = e?.detail?.type;
+      if (t === 'bonus2') {
+        const el = document.getElementById('silverCount');
+        if (el) el.textContent = Math.max(0, (parseInt(el.textContent||'0',10) - 1));
+      } else if (t === 'legendary') {
+        const el = document.getElementById('goldCount');
+        if (el) el.textContent = Math.max(0, (parseInt(el.textContent||'0',10) - 1));
+      }
+    });
+
+    // ---------- Copier l'adresse en cliquant sur le badge ----------
+    rankBadge?.addEventListener('click', async () => {
+      const w = wallet();
+      if (!w) return;
+      try{ await navigator.clipboard.writeText(w); alert('Wallet address copied'); }catch{}
+    });
+
+    // ---------- Bouton “Your rank” ----------
+    rankBtn?.addEventListener('click', async () => {
+      const w = wallet();
+      if (!w){ alert('Connect your wallet first.'); return; }
+      const me = await safeJson(`api/rank/${w}`);
+      const rk = (me && me.rank!=null) ? me.rank : '—';
+      qs('rankResult').style.display='block';
+      qs('rankResult').querySelector('b').textContent = rk;
+      rankBadge.textContent = `Rank: ${rk}`;
+    });
+
+    // ---------- Rendu du leaderboard ----------
+    function renderLeaders(rows){
+      leadersOl.innerHTML='';
+      if (!rows.length){ leadersOl.innerHTML='<li>No entries yet.</li>'; return; }
+
+      const my = wallet();
+      rows.forEach((row, idx) => {
+        const li=document.createElement('li');
+        const name=row.display || (row.player_id ? row.player_id.slice(0,6)+'…'+row.player_id.slice(-4) : 'player');
+        const score=row.score ?? 0, xp=row.xp ?? 0, level=row.level ?? 1;
+
+        const left = document.createElement('span');
+        left.className='left';
+        left.innerHTML = `${idx+1}. <b>${name}</b> — XP: ${xp} — Score: ${score} — Lvl: ${level}`;
+
+        const right = document.createElement('span');
+        right.className='right';
+        const addr=row.player_id||'';
+        const short = addr ? addr.slice(0,6)+'…'+addr.slice(-4) : '';
+        right.innerHTML = addr ? `<span class="wallet" title="Click to copy" data-full="${addr}">${short}</span>` : '';
+
+        if (addr && my && addr.toLowerCase()===my.toLowerCase()) li.classList.add('me');
+
+        li.appendChild(left); li.appendChild(right);
+        leadersOl.appendChild(li);
+
+        const wEl = right.querySelector('.wallet');
+        if (wEl){
+          wEl.addEventListener('click', async (e)=>{
+            const full = e.currentTarget.getAttribute('data-full');
+            try{ await navigator.clipboard.writeText(full); alert('Wallet address copied'); }catch{}
+          });
+        }
+      });
+    }
+
+    // ---------- Mise à jour du bandeau Rank/XP/Bonus ----------
+    function setRankSummary({rank='—', xp='—', silver=0, gold=0}={}){
+      rankSummary.textContent = `Rank: ${rank} · XP: ${xp} · Bonus: 🥇 ${gold} · 🥈 ${silver}`;
+      if (rankBadge) rankBadge.textContent = `Rank: ${rank}`;
+    }
+
+    async function fetchBonusCounts(w){
+      const d = await safeJson(`api/bonus/stats/${w}`);
+      return { silver: Number(d?.silver||0), gold: Number(d?.gold||0) };
+    }
+
+    async function refreshMePanel(rowsMaybe){
+      const w = wallet();
+      if (!w){ setRankSummary(); return; }
+
+      // 1) Rang
+      let rankVal = '—';
+      const me = await safeJson(`api/rank/${w}`);
+      if (me && me.rank!=null) rankVal = me.rank;
+
+      // 2) XP (depuis le leaderboard si dispo)
+      let xpVal = '—';
+      try{
+        const rows = rowsMaybe || (await safeJson('api/leaderboard'))?.top || [];
+        const mine = rows.find(r => r.player_id && r.player_id.toLowerCase() === w.toLowerCase());
+        if (mine) xpVal = mine.xp ?? 0;
+      }catch{}
+
+      // 3) Médailles (si endpoint perso)
+      const {silver, gold} = await fetchBonusCounts(w);
+
+      setRankSummary({rank:rankVal, xp:xpVal, silver, gold});
+    }
+
+    // ---------- Refresh global ----------
+    async function refreshLeaders(){
+      const data = await safeJson('api/leaderboard');
+      const rows = (data?.top || []).slice(0, 100);
+      renderLeaders(rows);
+      await refreshMePanel(rows);
+    }
+
+    // ---------- Démarrage & rafraîchissements ----------
+    (function start(){
+      refreshLeaders();
+      refreshBonusPanel(); // charge les valeurs s'il y a un endpoint
+      setInterval(refreshLeaders, 300000);     // Auto-refresh 5 min
+      setInterval(refreshBonusPanel, 300000);  // Auto-refresh 5 min
+    })();
+
+    // Le jeu émet ces events (voir game.js) :
+    document.addEventListener('aw:runEnded',     () => { refreshLeaders(); });
+    document.addEventListener('aw:bonusClaimed', () => { refreshLeaders(); refreshBonusPanel(); });
+
+    // ---------- Start overlay -> clique Play HUD ----------
+    (function wireStartOverlay(){
+      const overlay = document.getElementById('start-screen');
+      const startBtn = document.getElementById('start-btn');
+      const hudPlay  = document.getElementById('play');
+      if (!startBtn) return;
+      startBtn.addEventListener('click', () => {
+        if (overlay) overlay.style.display = 'none';
+        if (hudPlay) { hudPlay.disabled = false; try{ hudPlay.click(); }catch{} }
+      });
+    })();
+
+    // ---------- GO overlay -> clique Restart HUD ----------
+    (function wireGameOverOverlay(){
+      const goOverlay = document.getElementById('gameover');
+      const goRestart = document.getElementById('go-restart');
+      const hudRestart= document.getElementById('restart');
+      if (!goRestart) return;
+      goRestart.addEventListener('click', () => {
+        try{ hudRestart && hudRestart.click(); }catch{}
+        if (goOverlay) goOverlay.style.display = 'none';
+      });
+    })();
+
+    // ---------- Mobile helpers ----------
+    (function(){
+      const ua = navigator.userAgent || '';
+      const isMobileUA  = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+      const hasTouch    = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+      const isMobileLike= isMobileUA || hasTouch;
+      if (!isMobileLike) {
+        document.getElementById('rotateHint')?.setAttribute('aria-hidden','true');
+        document.getElementById('touchLayer')?.setAttribute('aria-hidden','true');
+        return;
+      }
+      const touchLayer  = document.getElementById('touchLayer');
+      const touchTop    = document.getElementById('touchTop');
+      const touchBottom = document.getElementById('touchBottom');
+
+      function landscape(){ return window.innerWidth > window.innerHeight; }
+      function updateTouchLayerVisibility(){
+        const show = landscape();
+        if (touchLayer){
+          touchLayer.style.display = show ? 'block' : 'none';
+          touchLayer.setAttribute('aria-hidden', show ? 'false' : 'true');
+        }
+      }
+      function emitGameEvent(name, detail){ document.dispatchEvent(new CustomEvent(name, { detail })); }
+      function bindHold(el, actionDown, actionUp){
+        if (!el) return; let pressed=false, lastTap=0;
+        const onDown = (ev)=>{
+          pressed=true; touchLayer && touchLayer.classList.add('active');
+          emitGameEvent(actionDown);
+          const now = ev.timeStamp || Date.now();
+          if (now - lastTap < 280){ emitGameEvent('boost:start'); }
+          lastTap = now; ev.preventDefault();
+        };
+        const onUp = (ev)=>{
+          if (pressed){ emitGameEvent(actionUp); }
+          pressed=false; touchLayer && touchLayer.classList.remove('active'); ev.preventDefault();
+        };
+        el.addEventListener('touchstart', onDown, {passive:false});
+        el.addEventListener('touchend',   onUp,   {passive:false});
+        el.addEventListener('touchcancel',onUp,   {passive:false});
+      }
+      bindHold(touchTop,    'touch:up:down',   'touch:up:up');
+      bindHold(touchBottom, 'touch:down:down', 'touch:down:up');
+
+      updateTouchLayerVisibility();
+      window.addEventListener('resize', updateTouchLayerVisibility);
+      window.addEventListener('orientationchange', updateTouchLayerVisibility);
+
+      const rotateHint = document.getElementById('rotateHint');
+      function updateRotateHint(){
+        const show = !landscape() && Math.min(window.innerWidth, window.innerHeight) < 860;
+        if (rotateHint){
+          rotateHint.style.display = show ? 'flex' : 'none';
+          rotateHint.setAttribute('aria-hidden', show ? 'false' : 'true');
+        }
+      }
+      updateRotateHint();
+      window.addEventListener('resize', updateRotateHint);
+      window.addEventListener('orientationchange', updateRotateHint);
+    })();
+  </script>
+</body>
+</html>

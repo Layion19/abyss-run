@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540">
+  <!-- colonnes lumineuses verticales -->
+  <defs>
+    <linearGradient id="col" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#fff0"/>
+      <stop offset="45%" stop-color="#ffffff2b"/>
+      <stop offset="55%" stop-color="#ffffff2b"/>
+      <stop offset="100%" stop-color="#fff0"/>
+    </linearGradient>
+  </defs>
+  <g opacity=".25">
+    <rect x="0" y="0" width="86" height="540" fill="url(#col)"/>
+    <rect x="114" y="0" width="86" height="540" fill="url(#col)"/>
+    <rect x="228" y="0" width="86" height="540" fill="url(#col)"/>
+    <rect x="342" y="0" width="86" height="540" fill="url(#col)"/>
+    <rect x="456" y="0" width="86" height="540" fill="url(#col)"/>
+    <rect x="570" y="0" width="86" height="540" fill="url(#col)"/>
+    <rect x="684" y="0" width="86" height="540" fill="url(#col)"/>
+    <rect x="798" y="0" width="86" height="540" fill="url(#col)"/>
+  </g>
+</svg>
