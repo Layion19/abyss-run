@@ -320,6 +320,14 @@
       try{ return await r.json(); }catch{ return null; }
     }
 
+    /* ===== [BLOC 1] GATE HELPERS ===== */
+    function gateOk() { return !!(window.AW_ACCESS && window.AW_ACCESS.canPlay === true); }
+    function requireGate(msg) {
+      if (gateOk()) return true;
+      try { window.AW_GATE && window.AW_GATE.show(msg || "Connect your wallet to play."); } catch {}
+      return false;
+    }
+
     // ---------- Bonuses strip refresh (optionnel si endpoint dispo) ----------
     async function refreshBonusPanel(){
       const d = await safeJson('api/bonus/remaining'); // {silver, gold, platinum?}
@@ -449,15 +457,61 @@
     document.addEventListener('aw:runEnded',     () => { refreshLeaders(); });
     document.addEventListener('aw:bonusClaimed', () => { refreshLeaders(); refreshBonusPanel(); });
 
-    // ---------- Start overlay -> clique Play HUD ----------
+    /* ===== [BLOC 2] PROTÉGER BOUTONS HUD ===== */
+    const hudPlay    = document.getElementById('play');
+    const hudRestart = document.getElementById('restart');
+
+    if (hudPlay) {
+      hudPlay.addEventListener('click', (ev) => {
+        if (!gateOk()) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          requireGate();
+          return false;
+        }
+      }, true);
+    }
+    if (hudRestart) {
+      hudRestart.addEventListener('click', (ev) => {
+        if (!gateOk()) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          requireGate();
+          return false;
+        }
+      }, true);
+    }
+    function updateHudGateState() {
+      if (hudPlay) hudPlay.disabled = !gateOk();
+    }
+    document.addEventListener('aw:access', updateHudGateState);
+    updateHudGateState();
+
+    /* ===== [BLOC 3] START OVERLAY GATED ===== */
     (function wireStartOverlay(){
       const overlay = document.getElementById('start-screen');
       const startBtn = document.getElementById('start-btn');
       const hudPlay  = document.getElementById('play');
       if (!startBtn) return;
-      startBtn.addEventListener('click', () => {
+
+      startBtn.addEventListener('click', (ev) => {
+        if (!gateOk()) {
+          ev.preventDefault();
+          requireGate("You must connect a wallet holding ≥1 Angry Whale to start.");
+          return false;
+        }
         if (overlay) overlay.style.display = 'none';
         if (hudPlay) { hudPlay.disabled = false; try{ hudPlay.click(); }catch{} }
+      });
+
+      document.addEventListener('aw:access', () => {
+        if (gateOk()) {
+          if (hudPlay) hudPlay.disabled = false;
+          // l’overlay reste visible, l’utilisateur choisit quand cliquer “Play”
+        } else {
+          if (hudPlay) hudPlay.disabled = true;
+          try { window.AW_GATE && window.AW_GATE.show(); } catch {}
+        }
       });
     })();
 
