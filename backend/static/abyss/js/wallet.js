@@ -1,37 +1,60 @@
 // backend/static/abyss/js/wallet.js
-// Gate "collant" : l’overlay ne disparaît que si le wallet connecté détient ≥1 NFT.
-// Bonus éligibles si balance ≥20. Multi-wallet (EIP-6963) + fallback window.ethereum.
-// Watchdog (MutationObserver + interval) pour recréer l’overlay si un autre script le retire.
+// Gate "collant" : overlay persistant tant que le wallet n’est pas connecté ou non éligible.
+// Bonus éligibles si balance >=20. Multi-wallet (EIP-6963) + MetaMask QR (SDK).
+// Vérif auto toutes les 24h + watchdog anti-suppression overlay.
+// Émet un évènement `aw:accessChanged` à chaque changement d’accès/éligibilité.
 
 (function () {
   "use strict";
 
   // ==================== Constantes ====================
   const WALLET_KEY = "walletAddress";
-  const CHECK_EVERY_MS = 4000;
-  const ENFORCE_EVERY_MS = 600; // watchdog
-
-  // ✅ Contrat ERC-721 Angry Whales
+  const LAST_CHECK_KEY = "aw:lastBalanceCheckAt";
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const CHECK_EVERY_MS = 4000;   // ping connexion/provider
+  const ENFORCE_EVERY_MS = 800;  // watchdog overlay
   const CONTRACT_ADDRESS = "0x8Bb25A82e2f0230c2CFE3278CBc16a2C93685359";
+  const REQUIRED_CHAIN_ID = null; // ex: "0x1" si nécessaire
 
-  // Laisser null pour ne pas forcer une chaîne (ex: '0x1' mainnet)
-  const REQUIRED_CHAIN_ID = null;
-
-  // ==================== État ====================
+  // ==================== États ====================
   let currentProvider = null;
-  let discoveredProviders = []; // via EIP-6963
-  let isChecking = false;
+  let discoveredProviders = [];
   let mounted = false;
-  let overlayWanted = true; // tant que canPlay === false
+  let isChecking = false;
+  let overlayWanted = true;
+  let mmSdk = null;
 
-  // ==================== Storage ====================
+  // ==================== Utils ====================
   const getStored = () => { try { return localStorage.getItem(WALLET_KEY) || null; } catch { return null; } };
   const setStored = (addr) => { try { addr ? localStorage.setItem(WALLET_KEY, addr) : localStorage.removeItem(WALLET_KEY); } catch {} };
 
-  // ==================== Overlay UI ====================
-  function overlayEl(){ return document.getElementById("wallet-overlay"); }
+  const lastCheckTooOld = () => {
+    const t = Number(localStorage.getItem(LAST_CHECK_KEY) || 0);
+    return !t || (Date.now() - t) > DAY_MS;
+  };
+  const markBalanceCheckedNow = () => {
+    try { localStorage.setItem(LAST_CHECK_KEY, String(Date.now())); } catch {}
+  };
 
-  function lockScroll(lock){
+  // ==================== MetaMask SDK (QR mobile) ====================
+  async function getMetaMaskQRProvider() {
+    const SDK = window.MetaMaskSDK;
+    if (!SDK) return null;
+    if (!mmSdk) {
+      mmSdk = new SDK({
+        dappMetadata: {
+          name: "Angry Whales — Abyss Run",
+          url: location.origin
+        }
+      });
+    }
+    return mmSdk.getProvider();
+  }
+
+  // ==================== Overlay ====================
+  const overlayEl = () => document.getElementById("wallet-overlay");
+
+  function lockScroll(lock) {
     try {
       document.documentElement.style.overflow = lock ? "hidden" : "";
       document.body.style.overflow = lock ? "hidden" : "";
@@ -59,40 +82,25 @@
     const o = document.createElement("div");
     o.id = "wallet-overlay";
     Object.assign(o.style, {
-      position: "fixed",
-      inset: "0",
-      background: "rgba(0,0,0,0.86)",
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
-      justifyContent: "center",
-      textAlign: "center",
-      zIndex: "999999",
-      padding: "24px",
-      // empêche les clics de “passer au travers”
-      pointerEvents: "auto"
+      position: "fixed", inset: "0", background: "rgba(0,0,0,0.86)",
+      display: "flex", flexDirection: "column", alignItems: "center",
+      justifyContent: "center", textAlign: "center", zIndex: "999999",
+      padding: "24px", pointerEvents: "auto"
     });
 
     const box = document.createElement("div");
     Object.assign(box.style, {
-      background: "rgba(10,20,40,0.95)",
-      border: "1px solid #223a67",
-      borderRadius: "14px",
-      boxShadow: "0 10px 30px rgba(0,0,0,.45)",
-      padding: "22px 26px",
-      maxWidth: "560px",
-      color: "#cfe6ff",
-      fontFamily: "system-ui,-apple-system,Segoe UI,Roboto,sans-serif"
+      background: "rgba(10,20,40,0.95)", border: "1px solid #223a67",
+      borderRadius: "14px", boxShadow: "0 10px 30px rgba(0,0,0,.45)",
+      padding: "22px 26px", maxWidth: "560px",
+      color: "#cfe6ff", fontFamily: "system-ui,-apple-system,Segoe UI,Roboto,sans-serif"
     });
 
     const h2 = document.createElement("h2");
-    h2.textContent = "Connect your Wallet to play 🐋";
+    h2.textContent = "CONNECT YOUR WALLET TO PLAY 🐋";
     Object.assign(h2.style, {
-      margin: "0 0 10px",
-      fontFamily: "'Bebas Neue',sans-serif",
-      fontSize: "42px",
-      letterSpacing: "2px",
-      color: "#ffcc00",
+      margin: "0 0 10px", fontFamily: "'Bebas Neue',sans-serif",
+      fontSize: "42px", letterSpacing: "2px", color: "#ffcc00",
       textShadow: "0 2px 10px rgba(0,0,0,.55)"
     });
 
@@ -101,80 +109,65 @@
     p.textContent = message || "You must connect a wallet to access the game.";
     p.style.margin = "0 0 16px";
 
-    // Sélecteur providers
     const providerWrap = document.createElement("div");
     providerWrap.style.margin = "12px 0 18px";
-
     const label = document.createElement("label");
     label.textContent = "Choose your wallet: ";
     label.style.marginRight = "8px";
-
     const select = document.createElement("select");
     select.id = "wallet-provider-select";
     Object.assign(select.style, {
-      padding: "8px 10px",
-      borderRadius: "8px",
-      border: "1px solid #3cc2ff",
-      background: "#0b2a46",
-      color: "#cfefff"
+      padding: "8px 10px", borderRadius: "8px", border: "1px solid #3cc2ff",
+      background: "#0b2a46", color: "#cfefff"
     });
 
     providerWrap.append(label, select);
 
     const btn = document.createElement("button");
+    btn.id = "wallet-connect-btn";
     btn.textContent = "🔗 Connect Wallet";
     Object.assign(btn.style, {
-      display: "inline-flex",
-      alignItems: "center",
-      justifyContent: "center",
-      padding: "12px 22px",
-      fontSize: "18px",
-      fontWeight: "700",
-      border: "1px solid #3cc2ff",
-      borderRadius: "10px",
-      background: "#0b2a46",
-      color: "#cfefff",
-      cursor: "pointer"
+      display: "inline-flex", alignItems: "center", justifyContent: "center",
+      padding: "12px 22px", fontSize: "18px", fontWeight: "700",
+      border: "1px solid #3cc2ff", borderRadius: "10px",
+      background: "#0b2a46", color: "#cfefff", cursor: "pointer"
     });
-    btn.addEventListener("click", async () => {
-      try {
-        await connectWallet(select.value); // ouvre MetaMask / Rabby si nécessaire
-      } catch (e) {
-        console.warn(e);
-        setOverlayMsg("Connection refused or failed. Please try again.");
-      }
-    });
+    btn.addEventListener("click", async () => { await connectWallet(select.value); });
 
     const hint = document.createElement("div");
-    hint.style.opacity = "0.8";
-    hint.style.marginTop = "10px";
-    hint.style.fontSize = "13px";
-    hint.textContent = "If no wallet is detected, install MetaMask or open with a compatible browser.";
+    hint.style.opacity = "0.8"; hint.style.marginTop = "10px"; hint.style.fontSize = "13px";
+    hint.textContent = "If no wallet is detected, install MetaMask or scan the QR code with MetaMask Mobile.";
 
     box.append(h2, p, providerWrap, btn, hint);
     o.appendChild(box);
     document.body.appendChild(o);
-
     refreshProviderOptions();
   }
 
   function removeOverlay() {
-    // On ne retire l’overlay que si on ne le “veut” plus (canPlay === true)
     overlayWanted = false;
     lockScroll(false);
     const el = overlayEl();
     if (el) el.remove();
   }
 
-  // ==================== Providers (EIP-6963) ====================
+  // ==================== Providers ====================
+  async function pickProvider(selectionId) {
+    if (selectionId === "mm-qr") return await getMetaMaskQRProvider();
+    if (selectionId === "injected" && window.ethereum) return window.ethereum;
+    if (selectionId && selectionId.startsWith("eip6963:")) {
+      const idx = Number(selectionId.split(":")[1] || -1);
+      if (idx >= 0 && discoveredProviders[idx]) return discoveredProviders[idx].provider;
+    }
+    return window.ethereum || null;
+  }
+
   function refreshProviderOptions() {
     const select = document.getElementById("wallet-provider-select");
     if (!select) return;
-
     while (select.firstChild) select.removeChild(select.firstChild);
 
     const options = [];
-
     discoveredProviders.forEach((d, idx) => {
       const name =
         (d.info && (d.info.name || d.info.rdns)) ||
@@ -183,10 +176,10 @@
       options.push({ id: `eip6963:${idx}`, label: name });
     });
 
-    if (window.ethereum) {
-      const name = window.ethereum.isMetaMask ? "MetaMask (injected)" : "Injected provider";
-      options.push({ id: "injected", label: name });
-    }
+    // Injected MetaMask
+    if (window.ethereum?.isMetaMask) options.push({ id: "injected", label: "MetaMask (Extension)" });
+    // MetaMask QR option
+    options.push({ id: "mm-qr", label: "MetaMask (QR Mobile)" });
 
     if (options.length === 0) options.push({ id: "none", label: "No provider detected" });
 
@@ -200,45 +193,26 @@
   function setupEIP6963Discovery() {
     if (mounted) return;
     mounted = true;
-
-    window.addEventListener("eip6963:announceProvider", (event) => {
-      const detail = event.detail;
-      if (!detail || !detail.provider) return;
-      const exists = discoveredProviders.some(d =>
-        (d.info && (d.info.uuid || d.info.rdns)) === (detail.info && (detail.info.uuid || detail.info.rdns)) ||
-        d.provider === detail.provider
+    window.addEventListener("eip6963:announceProvider", (e) => {
+      const d = e.detail;
+      if (!d?.provider) return;
+      const exists = discoveredProviders.some(x =>
+        (x.info && (x.info.uuid || x.info.rdns)) === (d.info && (d.info.uuid || d.info.rdns)) || x.provider === d.provider
       );
-      if (!exists) {
-        discoveredProviders.push(detail);
-        refreshProviderOptions();
-      }
+      if (!exists) { discoveredProviders.push(d); refreshProviderOptions(); }
     });
-
     window.dispatchEvent(new Event("eip6963:requestProvider"));
   }
 
-  function pickProvider(selectionId) {
-    if (selectionId && selectionId.startsWith("eip6963:")) {
-      const idx = Number(selectionId.split(":")[1] || -1);
-      if (idx >= 0 && discoveredProviders[idx]) return discoveredProviders[idx].provider;
-    }
-    if (selectionId === "injected" && window.ethereum) return window.ethereum;
-    return window.ethereum || null;
-  }
-
-  // ==================== Réseau / chaîne ====================
+  // ==================== Réseau ====================
   async function ensureChain(provider) {
     if (!REQUIRED_CHAIN_ID || !provider?.request) return true;
     try {
-      const current = await provider.request({ method: "eth_chainId" });
-      if (current === REQUIRED_CHAIN_ID) return true;
-      await provider.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: REQUIRED_CHAIN_ID }]
-      });
+      const chain = await provider.request({ method: "eth_chainId" });
+      if (chain === REQUIRED_CHAIN_ID) return true;
+      await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: REQUIRED_CHAIN_ID }] });
       return true;
     } catch (e) {
-      console.warn("Chain check/switch failed:", e);
       createOverlay("Please switch to the required network to play.");
       return false;
     }
@@ -246,169 +220,140 @@
 
   // ==================== Connexion ====================
   async function connectWallet(selectionId) {
-    const provider = pickProvider(selectionId);
+    const overlay = overlayEl();
+    const btn = overlay?.querySelector("#wallet-connect-btn");
+    const msg = overlay?.querySelector("[data-wallet-message]");
+    const provider = await pickProvider(selectionId);
+
     if (!provider) {
       setOverlayMsg("No compatible wallet detected.");
-      throw new Error("No provider");
+      return;
     }
-    const ok = await ensureChain(provider);
-    if (!ok) throw new Error("Wrong chain");
 
-    const accounts = await provider.request({ method: "eth_requestAccounts" }); // ouvre l’extension
-    const addr = Array.isArray(accounts) && accounts[0] ? accounts[0] : null;
+    const ok = await ensureChain(provider);
+    if (!ok) return;
+
+    if (btn) { btn.disabled = true; btn.textContent = "Waiting for wallet…"; }
+    if (msg) msg.textContent = "Please confirm in MetaMask.";
+
+    let addr = null;
+    try {
+      const accs = await provider.request({ method: "eth_requestAccounts" });
+      if (Array.isArray(accs) && accs[0]) addr = accs[0];
+    } catch (e) { console.warn(e); }
+
     if (!addr) {
-      setOverlayMsg("No account selected.");
-      throw new Error("No account");
+      if (btn) { btn.disabled = false; btn.textContent = "🔗 Connect Wallet"; }
+      if (msg) msg.textContent = "Connection cancelled or failed.";
+      return;
     }
 
     currentProvider = provider;
     setStored(addr);
-    await updateAccess(addr, provider); // décidera de retirer ou pas l’overlay
-    try { document.dispatchEvent(new CustomEvent("aw:walletConnected", { detail: { address: addr } })); } catch {}
+    await updateAccess(addr, provider);
+    bindProviderEvents(provider);
   }
 
-  // ==================== balanceOf(owner) (ERC-721) ====================
+  // ==================== balanceOf ====================
   async function fetchNftBalance(owner, provider) {
     const p = provider || currentProvider || window.ethereum;
     if (!p || !/^0x[0-9a-fA-F]{40}$/.test(CONTRACT_ADDRESS)) return 0n;
-
-    const selector = "0x70a08231"; // keccak256("balanceOf(address)")
+    // balanceOf(address) selector
+    const selector = "0x70a08231";
     const addrNo0x = owner.replace(/^0x/, "").toLowerCase();
     const data = selector + addrNo0x.padStart(64, "0");
-
     try {
       const res = await p.request({ method: "eth_call", params: [{ to: CONTRACT_ADDRESS, data }, "latest"] });
       return BigInt(res || "0x0");
-    } catch (e) {
-      console.warn("eth_call balanceOf failed:", e);
-      return 0n;
-    }
+    } catch { return 0n; }
   }
 
-  // ==================== Mise à jour d’accès ====================
-  async function updateAccess(addr, provider) {
+  // ==================== Access ====================
+  async function updateAccess(addr, provider, { force = false } = {}) {
     const p = provider || currentProvider || window.ethereum;
-    const ok = await ensureChain(p);
-    if (!ok) {
-      overlayWanted = true;
-      createOverlay("Please switch to the required network to play.");
-      return;
-    }
+    if (!await ensureChain(p)) return;
 
-    const balance = await fetchNftBalance(addr, p);
-    const canPlay = balance >= 1n;        // ≥1 NFT
-    const bonusEligible = balance >= 20n; // ≥20 NFTs
+    const mustCheck = force || lastCheckTooOld() || !window.AW_ACCESS || window.AW_ACCESS.address?.toLowerCase() !== addr.toLowerCase();
+    let balance = mustCheck ? await fetchNftBalance(addr, p) : BigInt(window.AW_ACCESS?.balance ?? 0);
+    if (mustCheck) markBalanceCheckedNow();
 
+    const canPlay = balance >= 1n;
+    const bonusEligible = balance >= 20n;
     const access = { address: addr, balance: Number(balance), canPlay, bonusEligible };
-    setStored(addr);
-    window.AW_ACCESS = access;
-    try { document.dispatchEvent(new CustomEvent("aw:access", { detail: access })); } catch {}
 
-    if (!canPlay) {
-      overlayWanted = true;
-      createOverlay("You need at least 1 Angry Whales NFT to play.");
-    } else {
-      overlayWanted = false;
-      removeOverlay();
-    }
+    window.AW_ACCESS = access;
+    setStored(addr);
+
+    // >>> NEW: notifier l’app que l’accès a changé
+    try { document.dispatchEvent(new CustomEvent('aw:accessChanged', { detail: access })); } catch {}
+
+    if (!canPlay) createOverlay("You need at least 1 Angry Whales NFT to play.");
+    else removeOverlay();
+
     console.log("AW_ACCESS:", access);
   }
 
-  // ==================== Vérif silencieuse ====================
   async function checkConnection() {
     if (isChecking) return;
     isChecking = true;
     try {
       const p = currentProvider || window.ethereum || null;
-      let onChain = null;
-
+      let acc = null;
       if (p?.request) {
-        try {
-          const accs = await p.request({ method: "eth_accounts" }); // silencieux
-          onChain = Array.isArray(accs) && accs[0] ? accs[0] : null;
-        } catch (e) {
-          console.warn("eth_accounts failed:", e);
-        }
+        try { const a = await p.request({ method: "eth_accounts" }); acc = Array.isArray(a) && a[0] ? a[0] : null; } catch {}
       }
-
       const stored = getStored();
-
-      if (!onChain) {
+      if (!acc) {
         setStored(null);
         window.AW_ACCESS = { address: null, balance: 0, canPlay: false, bonusEligible: false };
-        overlayWanted = true;
+
+        // >>> NEW: notifier ici aussi (déconnexion)
+        try { document.dispatchEvent(new CustomEvent('aw:accessChanged', { detail: window.AW_ACCESS })); } catch {}
+
         createOverlay("You must connect a wallet to access the game.");
         return;
       }
-
-      currentProvider = p || currentProvider;
-      if (stored !== onChain) setStored(onChain);
-      await updateAccess(onChain, currentProvider);
-    } finally {
-      isChecking = false;
-    }
+      if (!currentProvider && window.ethereum) currentProvider = window.ethereum;
+      if (stored !== acc) setStored(acc);
+      await updateAccess(acc, currentProvider, { force: lastCheckTooOld() });
+    } finally { isChecking = false; }
   }
 
-  // ==================== Watchdog “anti-disparition” ====================
+  // ==================== Watchdog ====================
   function enforceOverlayPresence() {
-    const needOverlay = overlayWanted || !(window.AW_ACCESS && window.AW_ACCESS.canPlay);
+    const need = overlayWanted || !(window.AW_ACCESS && window.AW_ACCESS.canPlay);
     const el = overlayEl();
-    if (needOverlay) {
+    if (need) {
       if (!el) createOverlay("You must connect a wallet to access the game.");
-      else {
-        // s’assurer qu’il est visible et au-dessus
-        el.style.display = "flex";
-        el.style.zIndex = "999999";
-        lockScroll(true);
-      }
-    } else {
-      if (el) removeOverlay();
-    }
+      else { el.style.display = "flex"; el.style.zIndex = "999999"; lockScroll(true); }
+    } else if (el) removeOverlay();
   }
 
-  // MutationObserver: si quelqu’un supprime l’overlay alors qu’il est requis → on le recrée
   try {
     const mo = new MutationObserver(() => enforceOverlayPresence());
-    mo.observe(document.documentElement || document.body, { childList: true, subtree: true });
+    mo.observe(document.body, { childList: true, subtree: true });
   } catch {}
 
-  // ==================== API debug ====================
-  window.AW_GATE = {
-    show: () => { overlayWanted = true; createOverlay("You must connect a wallet to access the game."); },
-    hide: () => { overlayWanted = false; removeOverlay(); },
-    reset: () => {
-      setStored(null);
-      window.AW_ACCESS = { address: null, balance: 0, canPlay: false, bonusEligible: false };
-      overlayWanted = true;
-      createOverlay("You must connect a wallet to access the game.");
-    },
-    check: () => checkConnection()
-  };
+  // ==================== API & Boot ====================
+  window.AW_GATE = { show: () => createOverlay(), hide: () => removeOverlay(), check: () => checkConnection() };
 
-  // ==================== Boot ====================
   const start = () => {
     setupEIP6963Discovery();
-    overlayWanted = true;
     createOverlay("You must connect a wallet to access the game.");
     checkConnection();
-    // Watchdog périodique
     setInterval(enforceOverlayPresence, ENFORCE_EVERY_MS);
   };
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", start, { once: true });
-  } else {
-    start();
-  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
+  else start();
 
-  // ==================== Écoutes provider & polling ====================
+  // Events
   function bindProviderEvents(p) {
     if (!p?.on) return;
     p.on("accountsChanged", () => checkConnection());
-    p.on("chainChanged",    () => checkConnection());
-    p.on("disconnect",      () => checkConnection());
+    p.on("chainChanged", () => checkConnection());
+    p.on("disconnect", () => checkConnection());
   }
   if (window.ethereum) bindProviderEvents(window.ethereum);
-
   window.addEventListener("focus", () => checkConnection());
   document.addEventListener("visibilitychange", () => { if (!document.hidden) checkConnection(); });
   setInterval(() => checkConnection(), CHECK_EVERY_MS);

@@ -4,6 +4,9 @@
 // Règles bonus (par run, sans pré-tirage) :
 //   - SILVER : 100 XP → 15% ; 600 XP → 45% (si pas déjà apparu)
 //   - GOLD   : 1000 XP → 8% ; 1500 XP → 15% (si pas déjà apparu)
+//   - PLATINUM : 1800 XP → 4% ; 2500 XP → 8% (si pas déjà apparu)
+//   - SPECIAL : 5% 1× / run → apparition différée 300–900 XP après le début
+//   - ANGRY WHALES (saisonnier) : dès 200 XP → 10% (apparition différée 80–160 XP) (front-only, pas de claim serveur)
 // ==========================================================================
 
 (function () {
@@ -18,6 +21,12 @@
   function getIdentity(){
     const w = localStorage.getItem('walletAddress');
     return { player_id: w || null, handle: null };
+  }
+
+  // ---------- Helpers eligibility ----------
+  function hasBonusAccess() {
+    // Bonus uniquement si au moins 20 NFTs (exposé par wallet.js)
+    return !!(window.AW_ACCESS && window.AW_ACCESS.bonusEligible);
   }
 
   // ---------- Canvas ----------
@@ -68,18 +77,39 @@
     silverChecked100: false,   // on a déjà tiré à 100?
     silverChecked600: false,   // on a déjà tiré à 600?
     silverPendingAtScore: null, // si un tirage a réussi, score où spawn
+
     // Gold
     goldSpawned: false,
     goldChecked1000: false,
     goldChecked1500: false,
     goldPendingAtScore: null,
 
+    // Platinum
+    platinumSpawned: false,
+    platinumChecked1800: false,
+    platinumChecked2500: false,
+    platinumPendingAtScore: null,
+
+    // Special (une fois par run max)
+    specialDecided: false,        // on a décidé si la run aura un special ?
+    specialWillSpawnThisRun: false,
+    specialSpawned: false,
+    specialPendingAtScore: null,
+
+    // Angry Whales (front-only, pas de claim serveur pour l’instant)
+    angrywhalesSpawned: false,
+    angrywhalesChecked200: false,
+    angrywhalesPendingAtScore: null,
+
     // Dispo/éligibilité (côté serveur) — fallback permissif
-    bonusAvailable: { silver: true, gold: true },
-    bonusEligible: { silver: true, gold: true },
+    bonusAvailable: { silver: true, gold: true, platinum: true },
+    bonusEligible:  { silver: true, gold: true, platinum: true },
+
+    // Garde locale (wallet.js) : true si ≥20 NFTs au moment du startRun
+    bonusGate: false,
 
     // Compteurs récupérés pendant la run (report fin de partie)
-    runBonuses: { silver: 0, gold: 0 },
+    runBonuses: { silver: 0, gold: 0, platinum: 0, special: 0, angrywhales: 0 },
     reportedThisRun: false,
   };
 
@@ -87,9 +117,16 @@
   async function refreshBonusFlags(){
     try{
       const avail = await fetch('api/bonus/availability').then(r=>r.ok?r.json():null).catch(()=>null);
-      if (avail && typeof avail.silver_remaining === 'number' && typeof avail.gold_remaining === 'number'){
-        state.bonusAvailable.silver = avail.silver_remaining > 0;
-        state.bonusAvailable.gold   = avail.gold_remaining   > 0;
+      if (avail){
+        if (typeof avail.silver_remaining === 'number'){
+          state.bonusAvailable.silver = avail.silver_remaining > 0;
+        }
+        if (typeof avail.gold_remaining === 'number'){
+          state.bonusAvailable.gold = avail.gold_remaining > 0;
+        }
+        if (typeof avail.platinum_remaining === 'number'){
+          state.bonusAvailable.platinum = avail.platinum_remaining > 0;
+        }
       }
     }catch{}
     try{
@@ -97,8 +134,9 @@
       if (!w) return;
       const elig = await fetch(`api/bonus/eligibility/${w}`).then(r=>r.ok?r.json():null).catch(()=>null);
       if (elig){
-        if (typeof elig.silver_left === 'number') state.bonusEligible.silver = elig.silver_left > 0;
-        if (typeof elig.gold_left   === 'number') state.bonusEligible.gold   = elig.gold_left   > 0;
+        if (typeof elig.silver_left === 'number')   state.bonusEligible.silver   = elig.silver_left > 0;
+        if (typeof elig.gold_left   === 'number')   state.bonusEligible.gold     = elig.gold_left   > 0;
+        if (typeof elig.platinum_left === 'number') state.bonusEligible.platinum = elig.platinum_left > 0;
       }
     }catch{}
   }
@@ -106,8 +144,10 @@
   // Report e-mail côté serveur (déclenché à la fin de partie)
   async function sendBonusReportIfAny(){
     if (state.reportedThisRun) return;
-    const s = state.runBonuses.silver|0, g = state.runBonuses.gold|0;
-    if (s<=0 && g<=0) return;
+    const s = state.runBonuses;
+    if (!s) return;
+    const total = (s.silver|0) + (s.gold|0) + (s.platinum|0) + (s.special|0) + (s.angrywhales|0);
+    if (total <= 0) return;
     state.reportedThisRun = true;
     try{
       const wallet = localStorage.getItem('walletAddress') || null;
@@ -116,10 +156,13 @@
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({
           wallet,
-          silver: s,
-          gold: g,
+          silver:   s.silver|0,
+          gold:     s.gold|0,
+          platinum: s.platinum|0,
+          special:  s.special|0,
+          angrywhales:   s.angrywhales|0,
           score: Math.floor(state.score),
-          xp:    Math.floor(state.score)
+          xp:    Math.floor(state.score),
         })
       });
     }catch{}
@@ -259,7 +302,6 @@
     chest: loadAudio(["static/abyss/sfx/chest.mp3","static/abyss/sfx/chest.wav"], {volume:0.95}),
     shark: loadAudio(["static/abyss/sfx/shark.mp3","static/abyss/sfx/shark.wav"], {volume:0.95}),
   };
-  // Même bruit pour ORCAS et SHARKS :
   audio.orca = audio.shark;
 
   window.audio = audio;
@@ -308,7 +350,10 @@
     // Récupère dispo/éligibilité (non bloquant)
     refreshBonusFlags();
 
-    // (re)mise à zéro des tirages de la run (on n’utilise plus de pré-tirage)
+    // Garde bonus d'après wallet.js (≥20 NFTs)
+    state.bonusGate = hasBonusAccess();
+
+    // Reset tirages de la run
     state.silverSpawned = false;
     state.silverChecked100 = false;
     state.silverChecked600 = false;
@@ -318,6 +363,25 @@
     state.goldChecked1000 = false;
     state.goldChecked1500 = false;
     state.goldPendingAtScore = null;
+
+    state.platinumSpawned = false;
+    state.platinumChecked1800 = false;
+    state.platinumChecked2500 = false;
+    state.platinumPendingAtScore = null;
+
+    state.specialDecided = true;
+    state.specialWillSpawnThisRun = (Math.random() < 0.05); // 5% une fois par run
+    state.specialSpawned = false;
+    state.specialPendingAtScore = state.specialWillSpawnThisRun
+      ? Math.floor(300 + Math.random()*600) // entre 300 et 900 XP
+      : null;
+
+    state.angrywhalesSpawned = false;
+    state.angrywhalesChecked200 = false;
+    state.angrywhalesPendingAtScore = null;
+
+    state.runBonuses = { silver:0, gold:0, platinum:0, special:0, angrywhales:0 };
+    state.reportedThisRun = false;
 
     state.running = true;
     try { if (musicEnabled) audio.bgm.play(); } catch {}
@@ -340,10 +404,14 @@
     // Reset bonus par run
     state.silverSpawned=false; state.silverChecked100=false; state.silverChecked600=false; state.silverPendingAtScore=null;
     state.goldSpawned=false; state.goldChecked1000=false; state.goldChecked1500=false; state.goldPendingAtScore=null;
+    state.platinumSpawned=false; state.platinumChecked1800=false; state.platinumChecked2500=false; state.platinumPendingAtScore=null;
+    state.specialDecided=false; state.specialWillSpawnThisRun=false; state.specialSpawned=false; state.specialPendingAtScore=null;
+    state.angrywhalesSpawned=false; state.angrywhalesChecked200=false; state.angrywhalesPendingAtScore=null;
 
-    state.bonusAvailable = { silver:true, gold:true };
-    state.bonusEligible  = { silver:true, gold:true };
-    state.runBonuses = { silver:0, gold:0 };
+    state.bonusAvailable = { silver:true, gold:true, platinum:true };
+    state.bonusEligible  = { silver:true, gold:true, platinum:true };
+    state.bonusGate = hasBonusAccess();
+    state.runBonuses = { silver:0, gold:0, platinum:0, special:0, angrywhales:0 };
     state.reportedThisRun = false;
   }
 
@@ -569,10 +637,22 @@
   function spawnHeart(){ const s=34*(W()/820); hearts.push({x:W()+70,y:rand(60,H()-60),s}); }
 
   // ---------- BONUS sprites ----------
-  let bonusSprite = null, bonus2Sprite = null;
-  (function loadBonusSprites(){
-    bonusSprite  = new Image(); bonusSprite.src  = "static/abyss/img/bonus.png";
-    bonus2Sprite = new Image(); bonus2Sprite.src = "static/abyss/img/bonus2.png";
+  const bonusImgs = {
+    legendary: "static/abyss/img/bonus.png",     // GOLD
+    bonus2:   "static/abyss/img/bonus2.png",     // SILVER
+    special:  "static/abyss/img/special.png",    // SPECIAL
+    platinum: "static/abyss/img/platinum.png",   // PLATINUM
+    angrywhales:   "static/abyss/img/angrywhales.png",     // ANGRY WHALES (front-only)
+    diamonds: "static/abyss/img/diamonds.png",   // (pré-chargé, pas utilisé)
+  };
+  const loadedImgs = {};
+  function preloadImg(name, url){
+    const img = new Image();
+    img.src = url;
+    loadedImgs[name] = img;
+  }
+  (function preloadBonusSprites(){
+    Object.entries(bonusImgs).forEach(([name, url]) => preloadImg(name, url));
   })();
 
   // ---------- BONUS draw ----------
@@ -586,21 +666,29 @@
     ctx.globalCompositeOperation = "screen";
     const g = ctx.createRadialGradient(x + s*0.5, y + s*0.5, 0, x + s*0.5, y + s*0.5, s*0.9);
     if (b.type === "legendary") g.addColorStop(0, "rgba(255,215,80,0.7)");
-    else                        g.addColorStop(0, "rgba(180,220,255,0.6)");
+    else if (b.type === "platinum") g.addColorStop(0, "rgba(200,200,255,0.7)");
+    else if (b.type === "special") g.addColorStop(0, "rgba(160,255,180,0.7)");
+    else if (b.type === "angrywhales") g.addColorStop(0, "rgba(180,230,255,0.7)");
+    else g.addColorStop(0, "rgba(180,220,255,0.6)");
     g.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.arc(x + s*0.5, y + s*0.5, s*0.9, 0, Math.PI*2); ctx.fill();
     ctx.restore();
 
     // sprite
-    const img = (b.type === "legendary") ? bonusSprite : bonus2Sprite;
+    const img = loadedImgs[b.type];
     if (img && img.complete) {
       ctx.drawImage(img, x, y, s, s);
     } else {
       // fallback simple
       ctx.save();
       ctx.translate(x + s/2, y + s/2);
-      ctx.fillStyle = (b.type === "legendary") ? "#ffd24a" : "#c0d8ff";
+      let col = "#c0d8ff";
+      if (b.type === "legendary") col = "#ffd24a";
+      else if (b.type === "platinum") col = "#b0b0ff";
+      else if (b.type === "special") col = "#b6ffd3";
+      else if (b.type === "angrywhales") col = "#b6e0ff";
+      ctx.fillStyle = col;
       ctx.beginPath();
       ctx.arc(0, 0, s*0.42, 0, Math.PI*2);
       ctx.fill();
@@ -614,7 +702,10 @@
     const y = rand(70, H()-70);
     bonuses.push({ type, x: W()+80, y, s, vx: -worldSpeed() });
     if (type === 'legendary') state.goldSpawned = true;
-    if (type === 'bonus2')    state.silverSpawned = true;
+    else if (type === 'bonus2') state.silverSpawned = true;
+    else if (type === 'platinum') state.platinumSpawned = true;
+    else if (type === 'special') state.specialSpawned = true;
+    else if (type === 'angrywhales') state.angrywhalesSpawned = true;
   }
 
   // ---------- Explosions (×0.5) ----------
@@ -790,7 +881,7 @@
 
   // ---------- Sharks ----------
   function spawnShark(){
-    const s = 120*(W()/820); // taille requin réglée par toi
+    const s = 120*(W()/820);
     let attempts = 8;
     while (attempts-- > 0){
       const x = W()+90, y = rand(70, H()-70), w = s, h = s;
@@ -818,8 +909,8 @@
     return 0.00;
   }
   function spawnChest(){
-    const base = 48*(W()/820);         // taille de base
-    const w = base*1.00, h = base*0.95; // légèrement réduit
+    const base = 48*(W()/820);
+    const w = base*1.00, h = base*0.95;
     let attempts = 12;
     while (attempts-- > 0){
       const x = W()+80, y = rand(70, H()-70);
@@ -882,14 +973,12 @@
     }
 
     if ((state.score>120 || state.elapsed>22) && state.orcaTimer <= 0){
-      // remplacement partiel orques → requins après 600 XP
       const chance = sharkReplacementChance(state.score);
       const doShark = (state.score >= 600) && (Math.random() < chance);
       if (doShark) spawnShark(); else spawnOrca();
       state.orcaTimer = (Math.random()*(4.6-3.0)+3.0) / (0.85 + 0.55*spawnScale);
     }
 
-    // spawner séparé requins
     if (state.score >= 600){
       state.sharkTimer -= dt;
       if (state.sharkTimer <= 0){
@@ -912,52 +1001,100 @@
           if (spawnChest()) state.chestSpawnedThisRun++;
         }
       }
-      // cadence 10–18s, un peu plus fréquente avec la difficulté
       state.chestTimer = (Math.random()*(18-10)+10) / (1 + d*0.25);
     }
 
     // ----- BONUS (tirages aux paliers de score) -----
     const xp = state.score|0;
+    const canSpawnBonuses = state.bonusGate === true; // verrou local (≥20 NFTs)
 
-    // SILVER : 100 → 15% ; 600 → 45% (si pas déjà apparu)
-    if (!state.silverSpawned && state.bonusAvailable.silver && state.bonusEligible.silver){
-      if (!state.silverChecked100 && xp >= 100){
-        state.silverChecked100 = true;
-        if (Math.random() < 0.15) {
-          // apparition différée dans ~80..220 XP
-          state.silverPendingAtScore = xp + Math.floor(80 + Math.random()*140);
+    if (canSpawnBonuses) {
+      // SILVER : 100 → 15% ; 600 → 45% (si pas déjà apparu)
+      if (!state.silverSpawned && state.bonusAvailable.silver && state.bonusEligible.silver){
+        if (!state.silverChecked100 && xp >= 100){
+          state.silverChecked100 = true;
+          if (Math.random() < 0.15) {
+            state.silverPendingAtScore = xp + Math.floor(80 + Math.random()*140);
+          }
+        }
+        if (!state.silverSpawned && !state.silverChecked600 && xp >= 600){
+          state.silverChecked600 = true;
+          if (Math.random() < 0.45) {
+            state.silverPendingAtScore = xp + Math.floor(80 + Math.random()*160);
+          }
         }
       }
-      if (!state.silverSpawned && !state.silverChecked600 && xp >= 600){
-        state.silverChecked600 = true;
-        if (Math.random() < 0.45) {
-          state.silverPendingAtScore = xp + Math.floor(80 + Math.random()*160);
+      if (!state.silverSpawned && state.silverPendingAtScore != null && xp >= state.silverPendingAtScore){
+        spawnBonus('bonus2'); // SILVER
+        state.silverPendingAtScore = null;
+      }
+
+      // GOLD : 1000 → 8% ; 1500 → 15% (si pas déjà apparu)
+      if (!state.goldSpawned && state.bonusAvailable.gold && state.bonusEligible.gold){
+        if (!state.goldChecked1000 && xp >= 1000){
+          state.goldChecked1000 = true;
+          if (Math.random() < 0.08) {
+            state.goldPendingAtScore = xp + Math.floor(100 + Math.random()*180);
+          }
+        }
+        if (!state.goldSpawned && !state.goldChecked1500 && xp >= 1500){
+          state.goldChecked1500 = true;
+          if (Math.random() < 0.15) {
+            state.goldPendingAtScore = xp + Math.floor(100 + Math.random()*200);
+          }
         }
       }
-    }
-    if (!state.silverSpawned && state.silverPendingAtScore != null && xp >= state.silverPendingAtScore){
-      spawnBonus('bonus2'); // SILVER
+      if (!state.goldSpawned && state.goldPendingAtScore != null && xp >= state.goldPendingAtScore){
+        spawnBonus('legendary'); // GOLD
+        state.goldPendingAtScore = null;
+      }
+
+      // PLATINUM : 1800 → 4% ; 2500 → 8% (si pas déjà apparu)
+      if (!state.platinumSpawned && state.bonusAvailable.platinum && state.bonusEligible.platinum){
+        if (!state.platinumChecked1800 && xp >= 1800){
+          state.platinumChecked1800 = true;
+          if (Math.random() < 0.04) {
+            state.platinumPendingAtScore = xp + Math.floor(120 + Math.random()*200);
+          }
+        }
+        if (!state.platinumSpawned && !state.platinumChecked2500 && xp >= 2500){
+          state.platinumChecked2500 = true;
+          if (Math.random() < 0.08) {
+            state.platinumPendingAtScore = xp + Math.floor(120 + Math.random()*220);
+          }
+        }
+      }
+      if (!state.platinumSpawned && state.platinumPendingAtScore != null && xp >= state.platinumPendingAtScore){
+        spawnBonus('platinum'); // PLATINUM
+        state.platinumPendingAtScore = null;
+      }
+
+      // SPECIAL : 5% 1×/run, apparition différée 300–900 XP
+      if (!state.specialSpawned && state.specialWillSpawnThisRun && state.specialPendingAtScore != null && xp >= state.specialPendingAtScore){
+        spawnBonus('special');
+        state.specialPendingAtScore = null;
+      }
+
+      // ANGRY WHALES (saisonnier, front-only) : dès 200 XP → 10%
+      if (!state.angrywhalesSpawned){
+        if (!state.angrywhalesChecked200 && xp >= 200){
+          state.angrywhalesChecked200 = true;
+          if (Math.random() < 0.10){
+            state.angrywhalesPendingAtScore = xp + Math.floor(80 + Math.random()*160);
+          }
+        }
+        if (state.angrywhalesPendingAtScore != null && xp >= state.angrywhalesPendingAtScore){
+          spawnBonus('angrywhales');
+          state.angrywhalesPendingAtScore = null;
+        }
+      }
+    } else {
+      // Si pas éligible aux bonus, on purge tout pending pour éviter un spawn tardif
       state.silverPendingAtScore = null;
-    }
-
-    // GOLD : 1000 → 8% ; 1500 → 15% (si pas déjà apparu)
-    if (!state.goldSpawned && state.bonusAvailable.gold && state.bonusEligible.gold){
-      if (!state.goldChecked1000 && xp >= 1000){
-        state.goldChecked1000 = true;
-        if (Math.random() < 0.08) {
-          state.goldPendingAtScore = xp + Math.floor(100 + Math.random()*180);
-        }
-      }
-      if (!state.goldSpawned && !state.goldChecked1500 && xp >= 1500){
-        state.goldChecked1500 = true;
-        if (Math.random() < 0.15) {
-          state.goldPendingAtScore = xp + Math.floor(100 + Math.random()*200);
-        }
-      }
-    }
-    if (!state.goldSpawned && state.goldPendingAtScore != null && xp >= state.goldPendingAtScore){
-      spawnBonus('legendary'); // GOLD
       state.goldPendingAtScore = null;
+      state.platinumPendingAtScore = null;
+      state.specialPendingAtScore = null;
+      state.angrywhalesPendingAtScore = null;
     }
 
     // monde → gauche
@@ -1025,12 +1162,11 @@
       }
     }
 
-    // Cœurs (mouvement + collision)
+    // Cœurs
     for (let i=hearts.length-1;i>=0;i--){
       const h = hearts[i];
       h.x = (h.x||0) + vx;
       if (h.x < -70){ hearts.splice(i,1); continue; }
-      // collision
       const cx = h.x + h.s*0.5, cy = h.y + h.s*0.5, rr = Math.max(12, h.s*0.35);
       if (circleHit(player.x(),player.y,player.radius, cx, cy, rr)){
         hearts.splice(i,1);
@@ -1039,13 +1175,13 @@
       }
     }
 
-    // collisions orbes
+    // Orbes collisions
     for (let i=orbs.length-1;i>=0;i--){
       const o=orbs[i];
       if (circleHit(player.x(),player.y,player.radius, o.x,o.y,o.r)){ orbs.splice(i,1); state.score+=10; playSfx(audio.orb, 0.9); }
       else { o.phase = (o.phase||0) + 3.0*dt; }
     }
-    // collisions orcas / sharks
+    // Orques / Sharks collisions
     for (let i=orcas.length-1;i>=0;i--){
       const o=orcas[i], rr=Math.max(o.w,o.h)*0.35;
       if (circleHit(player.x(),player.y,player.radius, o.x+o.w*0.5, o.y+o.h*0.5, rr)){
@@ -1071,14 +1207,36 @@
       const cx = b.x + b.s*0.5, cy = b.y + b.s*0.5, rr = Math.max(16, b.s*0.35);
       if (circleHit(player.x(),player.y,player.radius, cx, cy, rr)){
         bonuses.splice(i,1);
-        state.score += (b.type === 'legendary') ? 150 : 40;
+        // Récompense XP selon type
+        let xpGain = 40;
+        if (b.type === 'legendary') xpGain = 150;
+        else if (b.type === 'platinum') xpGain = 220;
+        else if (b.type === 'special') xpGain = 60;
+        else if (b.type === 'angrywhales') xpGain = 80;
+        state.score += xpGain;
         playSfx(audio.bonus, 1.0);
-        if (b.type === 'legendary') state.runBonuses.gold++;
-        else state.runBonuses.silver++;
+
+        // Compteurs run + claim API si applicable
         try {
           const wallet = localStorage.getItem('walletAddress') || null;
-          postJSON('api/bonus/claim', { type: b.type, wallet }).catch(()=>{});
+          if (b.type === 'legendary') {
+            state.runBonuses.gold++;
+            postJSON('api/bonus/claim', { type: 'legendary', wallet }).catch(()=>{});
+          } else if (b.type === 'bonus2') {
+            state.runBonuses.silver++;
+            postJSON('api/bonus/claim', { type: 'bonus2', wallet }).catch(()=>{});
+          } else if (b.type === 'platinum') {
+            state.runBonuses.platinum++;
+            postJSON('api/bonus/claim', { type: 'platinum', wallet }).catch(()=>{});
+          } else if (b.type === 'special') {
+            state.runBonuses.special++;
+            // pas de claim serveur pour SPECIAL (pas d’inventaire global)
+          } else if (b.type === 'angrywhales') {
+            state.runBonuses.angrywhales++;
+            // pas de claim serveur tant que l’API ne supporte pas "angrywhales"
+          }
         }catch{}
+
         try { document.dispatchEvent(new CustomEvent('aw:bonusClaimed', { detail:{ type: b.type } })); } catch {}
         refreshBonusFlags();
       }
