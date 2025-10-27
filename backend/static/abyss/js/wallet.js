@@ -10,8 +10,8 @@
   const WALLET_KEY = "walletAddress";
   const LAST_CHECK_KEY = "aw:lastBalanceCheckAt";
   const DAY_MS = 24 * 60 * 60 * 1000;
-  const CHECK_EVERY_MS = 4000;   // ping connexion/provider
-  const ENFORCE_EVERY_MS = 800;  // watchdog overlay
+  const CHECK_EVERY_MS = 4000;
+  const ENFORCE_EVERY_MS = 800;
 
   // Contrat ERC-721 Angry Whales
   const CONTRACT_ADDRESS = "0x8Bb25A82e2f0230c2CFE3278CBc16a2C93685359";
@@ -19,13 +19,13 @@
   // Réseau requis : Abstract mainnet (2741 décimal = 0xAB5 hex)
   const REQUIRED_CHAIN_ID = "0xAB5";
 
-  // Paramètres pour `wallet_addEthereumChain` (à ajuster si besoin)
+  // Paramètres chain (ajuste rpcUrls/explorer si besoin)
   const ABSTRACT_CHAIN_PARAMS = {
     chainId: REQUIRED_CHAIN_ID,
     chainName: "Abstract",
     nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-    rpcUrls: ["https://api.mainnet.abs.xyz"],      // ← mets ton RPC si différent
-    blockExplorerUrls: ["https://scan.abs.xyz/"]   // ← mets ton explorer si différent
+    rpcUrls: ["https://api.mainnet.abs.xyz"],
+    blockExplorerUrls: ["https://scan.abs.xyz/"]
   };
 
   // ==================== États ====================
@@ -48,7 +48,15 @@
     try { localStorage.setItem(LAST_CHECK_KEY, String(Date.now())); } catch {}
   };
 
-  // ==================== Chargement MetaMask SDK (QR) ====================
+  // --- robustesse BigInt(hex)
+  function hexToBigInt(x) {
+    try {
+      if (!x || x === "0x") return 0n;
+      return BigInt(x);
+    } catch { return 0n; }
+  }
+
+  // ==================== MetaMask SDK (QR) ====================
   async function ensureMetaMaskSdkLoaded() {
     if (window.MetaMaskSDK) return true;
     try {
@@ -61,22 +69,29 @@
         document.head.appendChild(s);
       });
       return !!window.MetaMaskSDK;
-    } catch {
-      return false;
-    }
+    } catch { return false; }
   }
+
   async function getMetaMaskQRProvider() {
     const ok = await ensureMetaMaskSdkLoaded();
     if (!ok) return null;
     const SDK = window.MetaMaskSDK;
     if (!SDK) return null;
+
     if (!mmSdk) {
       mmSdk = new SDK({
         dappMetadata: { name: "Angry Whales — Abyss Run", url: location.origin },
-        // Optionnel: désactiver les "modals" internes si tu préfères l’overlay du jeu
-        // checkInstallationImmediately: false,
+        // Préfère QR plutôt que deeplink auto
+        useDeeplink: false,
+        // Améliore la fiabilité des connexions desktop ↔ mobile
+        communicationServerUrl: "https://metamask-sdk.bridge.metamask.io",
+        storage: { enabled: true },
+        // Optionnel: activer leurs modals internes
+        modals: { install: true, otp: true },
+        // Laissez le SDK gérer l’ouverture du QR
       });
     }
+    // Le provider MetaMask Mobile (QR)
     return mmSdk.getProvider();
   }
 
@@ -149,7 +164,6 @@
       padding: "8px 10px", borderRadius: "8px", border: "1px solid #3cc2ff",
       background: "#0b2a46", color: "#cfefff", minWidth: "280px"
     });
-
     providerWrap.append(label, select);
 
     const btnRow = document.createElement("div");
@@ -207,7 +221,6 @@
       const idx = Number(selectionId.split(":")[1] || -1);
       if (idx >= 0 && discoveredProviders[idx]) return discoveredProviders[idx].provider;
     }
-    // Fallback: injected ethereum si dispo
     return window.ethereum || null;
   }
 
@@ -217,8 +230,6 @@
     while (select.firstChild) select.removeChild(select.firstChild);
 
     const options = [];
-
-    // Providers EIP-6963 (Coinbase Wallet, Rabby, MetaMask, etc.)
     discoveredProviders.forEach((d, idx) => {
       const name =
         (d.info && (d.info.name || d.info.rdns)) ||
@@ -227,10 +238,7 @@
       options.push({ id: `eip6963:${idx}`, label: name });
     });
 
-    // Injected MetaMask (legacy/injected)
     if (window.ethereum?.isMetaMask) options.push({ id: "injected", label: "MetaMask (Extension)" });
-
-    // S’il n’y a aucun provider EIP-6963, on propose tout de même l’option QR via bouton dédié
     if (options.length === 0) options.push({ id: "none", label: "No provider detected (try QR button)" });
 
     for (const opt of options) {
@@ -239,7 +247,6 @@
       select.appendChild(o);
     }
 
-    // Sélectionner par défaut le premier provider détecté
     if (select.options.length > 0) select.selectedIndex = 0;
   }
 
@@ -271,16 +278,14 @@
         });
         return true;
       } catch (e) {
-        // 4902: Unrecognized chain → on tente d’ajouter Abstract
         if (e && (e.code === 4902 || String(e.message || "").toLowerCase().includes("unrecognized"))) {
           try {
             await provider.request({
               method: "wallet_addEthereumChain",
               params: [ABSTRACT_CHAIN_PARAMS]
             });
-            // Après add, on est généralement déjà sur le bon réseau
             return true;
-          } catch (addErr) {
+          } catch {
             setOverlayMsg("Please add/switch to the Abstract network in your wallet.");
             return false;
           }
@@ -289,7 +294,7 @@
         return false;
       }
     } catch {
-      // Impossible de lire la chaîne → on laisse tenter la connexion quand même
+      // si on ne peut pas lire la chainId, on ne bloque pas ici
       return true;
     }
   }
@@ -309,7 +314,6 @@
     if (btn) { btn.disabled = true; btn.textContent = "Waiting for wallet…"; }
     if (msg) msg.textContent = "Opening wallet…";
 
-    // On demande les comptes (déclenche l’extension / mobile)
     let addr = null;
     try {
       const accs = await provider.request({ method: "eth_requestAccounts" });
@@ -324,7 +328,6 @@
       return;
     }
 
-    // S’assurer ensuite d’être sur Abstract
     const ok = await ensureChain(provider);
     if (!ok) {
       if (btn) { btn.disabled = false; btn.textContent = "🔗 Connect Wallet"; }
@@ -344,13 +347,13 @@
   async function fetchNftBalance(owner, provider) {
     const p = provider || currentProvider || window.ethereum;
     if (!p || !/^0x[0-9a-fA-F]{40}$/.test(CONTRACT_ADDRESS)) return 0n;
-    // ERC-721 balanceOf(address) → même selector que ERC-20
-    const selector = "0x70a08231";
+
+    const selector = "0x70a08231"; // balanceOf(address)
     const addrNo0x = owner.replace(/^0x/, "").toLowerCase();
     const data = selector + addrNo0x.padStart(64, "0");
     try {
       const res = await p.request({ method: "eth_call", params: [{ to: CONTRACT_ADDRESS, data }, "latest"] });
-      return BigInt(res || "0x0");
+      return hexToBigInt(res);
     } catch {
       return 0n;
     }
@@ -359,8 +362,6 @@
   // ==================== Access ====================
   async function updateAccess(addr, provider, { force = false } = {}) {
     const p = provider || currentProvider || window.ethereum;
-
-    // On tente de rester sur Abstract; si échec, on ne bloque pas le fetch mais on affichera l’overlay
     await ensureChain(p);
 
     const mustCheck = force || lastCheckTooOld() ||
