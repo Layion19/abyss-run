@@ -2,10 +2,12 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 import os
 import time
 import datetime as dt
+import smtplib
+from email.message import EmailMessage
 
 # Import absolu (on lance depuis backend/)
 from db_bonus import (
@@ -43,6 +45,39 @@ def current_season_id(now_ts: Optional[int] = None) -> str:
     return f"{start_year:04d}-{start_month:02d}"
 
 # ============================================================
+# Config e-mail (env ou valeurs sûres par défaut)
+# ============================================================
+
+EMAIL_ENABLED = os.getenv("EMAIL_ENABLED", "1") not in ("0", "false", "False", "")
+EMAIL_SMTP_HOST = os.getenv("EMAIL_SMTP_HOST", "smtp.gmail.com")
+EMAIL_SMTP_PORT = int(os.getenv("EMAIL_SMTP_PORT", "587"))
+EMAIL_SMTP_USER = os.getenv("EMAIL_SMTP_USER", "angrywhales1@gmail.com")
+EMAIL_SMTP_PASS = os.getenv("EMAIL_SMTP_PASS", "")  # ⚠️ à renseigner: mot de passe d’application Gmail
+EMAIL_FROM      = os.getenv("EMAIL_FROM",      "angrywhales1@gmail.com")
+EMAIL_TO_CLAIMS = os.getenv("EMAIL_TO_CLAIMS", "angrywhales1@gmail.com")
+
+def send_email(subject: str, body: str) -> bool:
+    """Envoie un email texte. Retourne True si succès, False sinon (sans casser l’API)."""
+    if not EMAIL_ENABLED:
+        return False
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = EMAIL_FROM
+        msg["To"] = EMAIL_TO_CLAIMS
+        msg.set_content(body)
+
+        with smtplib.SMTP(EMAIL_SMTP_HOST, EMAIL_SMTP_PORT, timeout=12) as s:
+            s.starttls()
+            if EMAIL_SMTP_USER and EMAIL_SMTP_PASS:
+                s.login(EMAIL_SMTP_USER, EMAIL_SMTP_PASS)
+            s.send_message(msg)
+        return True
+    except Exception:
+        # Ne pas faire échouer la requête si l'email tombe.
+        return False
+
+# ============================================================
 # Config quotas + stocks par défaut
 # ============================================================
 
@@ -51,23 +86,23 @@ MAX_PER_WALLET = {
     "silver": 5,
     "gold": 1,
     "platinum": 1,
-    "special": 1,         # <= demandé
-    "angry_whales": 1,    # <= demandé (1 par wallet / saison)
+    "special": 1,
+    "angrywhales": 1,  # ← plus d’underscore
 }
 
 # Overrides possibles via variables d'env si besoin
 PLATINUM_STOCK_DEFAULT = int(os.getenv("PLATINUM_STOCK", "1"))
 SILVER_STOCK_DEFAULT   = int(os.getenv("SILVER_STOCK", "20"))
 GOLD_STOCK_DEFAULT     = int(os.getenv("GOLD_STOCK", "1"))
-SPECIAL_STOCK_DEFAULT  = int(os.getenv("SPECIAL_STOCK", "4"))     # 4 Specials visibles côté index
-AW_STOCK_DEFAULT       = int(os.getenv("AW_STOCK", "5"))           # 5 Angry Whales visibles côté index
+SPECIAL_STOCK_DEFAULT  = int(os.getenv("SPECIAL_STOCK", "4"))     # 4 Specials par mois
+AW_STOCK_DEFAULT       = int(os.getenv("AW_STOCK", "5"))           # 5 Angry Whales par mois
 
 DEFAULT_STOCK = {
     "silver": SILVER_STOCK_DEFAULT,
     "gold": GOLD_STOCK_DEFAULT,
     "platinum": PLATINUM_STOCK_DEFAULT,
     "special": SPECIAL_STOCK_DEFAULT,
-    "angry_whales": AW_STOCK_DEFAULT,
+    "angrywhales": AW_STOCK_DEFAULT,   # ← plus d’underscore
 }
 
 # ============================================================
@@ -103,21 +138,24 @@ def max_per_wallet_reached(wallet: str, bonus_type: str, season_id: str) -> bool
 
 class ClaimBody(BaseModel):
     # Types front:
-    #   - "bonus2"        → silver
-    #   - "legendary"     → gold
-    #   - "platinum"      → platinum
-    #   - "special"       → special          (nouveau)
-    #   - "angry_whales"  → angry_whales    (nouveau)
+    #   - "bonus2"       → silver
+    #   - "legendary"    → gold
+    #   - "platinum"     → platinum
+    #   - "special"      → special
+    #   - "angrywhales"  → angrywhales   (← sans underscore)
     type: str
     wallet: str
     run_id: Optional[str] = None
 
 class ReportBody(BaseModel):
     wallet: Optional[str] = None
-    silver: int
-    gold: int
-    score: int
-    xp: int
+    silver: Optional[int] = 0
+    gold: Optional[int] = 0
+    platinum: Optional[int] = 0
+    special: Optional[int] = 0
+    angrywhales: Optional[int] = 0
+    score: Optional[int] = 0
+    xp: Optional[int] = 0
 
 # ============================================================
 # Boot DB
@@ -135,11 +173,11 @@ async def bonus_availability():
     get_or_create_inventory(season, DEFAULT_STOCK)
     inv = inventory_remaining(season, DEFAULT_STOCK)
     return JSONResponse({
-        "silver_remaining":     max(inv.get("silver", 0), 0),
-        "gold_remaining":       max(inv.get("gold", 0), 0),
-        "platinum_remaining":   max(inv.get("platinum", 0), 0),
-        "special_remaining":    max(inv.get("special", 0), 0),
-        "angry_whales_remaining": max(inv.get("angry_whales", 0), 0),
+        "silver_remaining":       max(inv.get("silver", 0), 0),
+        "gold_remaining":         max(inv.get("gold", 0), 0),
+        "platinum_remaining":     max(inv.get("platinum", 0), 0),
+        "special_remaining":      max(inv.get("special", 0), 0),
+        "angrywhales_remaining":  max(inv.get("angrywhales", 0), 0),
         "season_id": season,
     })
 
@@ -161,15 +199,15 @@ async def bonus_eligibility(wallet: str):
     gold_global         = max(inv.get("gold", 0), 0)
     platinum_global     = max(inv.get("platinum", 0), 0)
     special_global      = max(inv.get("special", 0), 0)
-    angry_whales_global = max(inv.get("angry_whales", 0), 0)
+    angrywhales_global  = max(inv.get("angrywhales", 0), 0)
 
     # Restant côté wallet (quota saison)
     counters = get_wallet_counters(w, season)
-    silver_quota_left       = max(0, (MAX_PER_WALLET["silver"]       or 10**9) - (counters.get("silver", 0) or 0))
-    gold_quota_left         = max(0, (MAX_PER_WALLET["gold"]         or 10**9) - (counters.get("gold", 0) or 0))
-    platinum_quota_left     = max(0, (MAX_PER_WALLET["platinum"]     or 10**9) - (counters.get("platinum", 0) or 0))
-    special_quota_left      = max(0, (MAX_PER_WALLET["special"]      or 10**9) - (counters.get("special", 0) or 0))
-    angry_whales_quota_left = max(0, (MAX_PER_WALLET["angry_whales"] or 10**9) - (counters.get("angry_whales", 0) or 0))
+    silver_quota_left       = max(0, (MAX_PER_WALLET["silver"]      or 10**9) - (counters.get("silver", 0) or 0))
+    gold_quota_left         = max(0, (MAX_PER_WALLET["gold"]        or 10**9) - (counters.get("gold", 0) or 0))
+    platinum_quota_left     = max(0, (MAX_PER_WALLET["platinum"]    or 10**9) - (counters.get("platinum", 0) or 0))
+    special_quota_left      = max(0, (MAX_PER_WALLET["special"]     or 10**9) - (counters.get("special", 0) or 0))
+    angrywhales_quota_left  = max(0, (MAX_PER_WALLET["angrywhales"] or 10**9) - (counters.get("angrywhales", 0) or 0))
 
     if not bonus_ok:
         return JSONResponse({
@@ -179,18 +217,18 @@ async def bonus_eligibility(wallet: str):
             "gold_left": 0,
             "platinum_left": 0,
             "special_left": 0,
-            "angry_whales_left": 0,
+            "angrywhales_left": 0,
             "season_id": season,
         })
 
     return JSONResponse({
         "can_play": play_ok,
         "bonus_eligible": True,
-        "silver_left":       min(silver_global,       silver_quota_left),
-        "gold_left":         min(gold_global,         gold_quota_left),
-        "platinum_left":     min(platinum_global,     platinum_quota_left),
-        "special_left":      min(special_global,      special_quota_left),
-        "angry_whales_left": min(angry_whales_global, angry_whales_quota_left),
+        "silver_left":       min(silver_global,      silver_quota_left),
+        "gold_left":         min(gold_global,        gold_quota_left),
+        "platinum_left":     min(platinum_global,    platinum_quota_left),
+        "special_left":      min(special_global,     special_quota_left),
+        "angrywhales_left":  min(angrywhales_global, angrywhales_quota_left),
         "season_id": season,
     })
 
@@ -200,17 +238,22 @@ async def bonus_claim(body: ClaimBody):
     if not w:
         raise HTTPException(status_code=400, detail="missing_or_invalid_wallet")
 
-    # Mapping front → type DB
+    # Mapping front → type DB (internal)
     if body.type == "bonus2":
         bonus_type = "silver"
+        label = "SILVER"
     elif body.type == "legendary":
         bonus_type = "gold"
+        label = "GOLD"
     elif body.type == "platinum":
         bonus_type = "platinum"
+        label = "PLATINUM"
     elif body.type == "special":
         bonus_type = "special"
-    elif body.type == "angry_whales":
-        bonus_type = "angry_whales"
+        label = "SPECIAL"
+    elif body.type == "angrywhales":  # ← sans underscore
+        bonus_type = "angrywhales"
+        label = "ANGRY WHALES"
     else:
         raise HTTPException(status_code=400, detail="invalid_bonus_type")
 
@@ -238,11 +281,30 @@ async def bonus_claim(body: ClaimBody):
     if new_claim:
         ok = decrement_stock(season, bonus_type)
         if not ok:
-            # Si un autre process a pris le dernier slot juste avant
             raise HTTPException(status_code=409, detail="out_of_stock")
         increment_wallet_counter(w, season, bonus_type)
 
     counters = get_wallet_counters(w, season)
+
+    # 6) Email de notification (non bloquant si erreur)
+    subject = f"[Abyss Run] Claim {label} — {w[:6]}…{w[-4:]} (season {season})"
+    lines = [
+        f"Season: {season}",
+        f"Wallet: {w}",
+        f"Bonus : {label}",
+        f"Run ID: {body.run_id or '-'}",
+        "",
+        "Counters (this wallet / season):",
+        f"  SILVER      : {counters.get('silver', 0)}",
+        f"  GOLD        : {counters.get('gold', 0)}",
+        f"  PLATINUM    : {counters.get('platinum', 0)}",
+        f"  SPECIAL     : {counters.get('special', 0)}",
+        f"  ANGRY WHALES: {counters.get('angrywhales', 0)}",
+        "",
+        "— Abyss Run notifier",
+    ]
+    send_email(subject, "\n".join(lines))
+
     return JSONResponse({
         "ok": True,
         "type": body.type,
@@ -256,11 +318,11 @@ async def bonus_remaining():
     get_or_create_inventory(season, DEFAULT_STOCK)
     inv = inventory_remaining(season, DEFAULT_STOCK)
     return JSONResponse({
-        "silver":       max(inv.get("silver", 0), 0),
-        "gold":         max(inv.get("gold", 0), 0),
-        "platinum":     max(inv.get("platinum", 0), 0),
-        "special":      max(inv.get("special", 0), 0),
-        "angry_whales": max(inv.get("angry_whales", 0), 0),
+        "silver":      max(inv.get("silver", 0), 0),
+        "gold":        max(inv.get("gold", 0), 0),
+        "platinum":    max(inv.get("platinum", 0), 0),
+        "special":     max(inv.get("special", 0), 0),
+        "angrywhales": max(inv.get("angrywhales", 0), 0),
         "season_id": season,
     })
 
@@ -273,17 +335,51 @@ async def bonus_stats(wallet: str):
     get_or_create_inventory(season, DEFAULT_STOCK)
     s = get_wallet_counters(w, season)
     return JSONResponse({
-        "silver": s.get("silver", 0),
-        "gold": s.get("gold", 0),
-        "platinum": s.get("platinum", 0),
-        "special": s.get("special", 0),
-        "angry_whales": s.get("angry_whales", 0),
+        "silver":      s.get("silver", 0),
+        "gold":        s.get("gold", 0),
+        "platinum":    s.get("platinum", 0),
+        "special":     s.get("special", 0),
+        "angrywhales": s.get("angrywhales", 0),
         "season_id": season,
     })
 
 @bonus_router.post("/report")
-async def bonus_report(_: dict):
-    # À brancher si tu veux logguer score/xp/bonus en DB
+async def bonus_report(payload: Dict[str, Any]):
+    """
+    Rapport de fin de run (front envoie un résumé). On loggue et on peut envoyer un e-mail récap si besoin.
+    Le payload est permissif (tous les champs optionnels).
+    """
+    season = current_season_id()
+    w = normalize_wallet(payload.get("wallet"))
+    silver = int(payload.get("silver", 0) or 0)
+    gold = int(payload.get("gold", 0) or 0)
+    platinum = int(payload.get("platinum", 0) or 0)
+    special = int(payload.get("special", 0) or 0)
+    angrywhales = int(payload.get("angrywhales", 0) or 0)
+    score = int(payload.get("score", 0) or 0)
+    xp = int(payload.get("xp", 0) or 0)
+
+    total = silver + gold + platinum + special + angrywhales
+    if total > 0 and w:
+        subject = f"[Abyss Run] Run report — {w[:6]}…{w[-4:]} (season {season})"
+        lines = [
+            f"Season: {season}",
+            f"Wallet: {w}",
+            "",
+            "Bonuses picked in this run:",
+            f"  SILVER      : {silver}",
+            f"  GOLD        : {gold}",
+            f"  PLATINUM    : {platinum}",
+            f"  SPECIAL     : {special}",
+            f"  ANGRY WHALES: {angrywhales}",
+            "",
+            f"Score: {score}",
+            f"XP   : {xp}",
+            "",
+            "— Abyss Run notifier",
+        ]
+        send_email(subject, "\n".join(lines))
+
     return JSONResponse({"ok": True})
 
 @bonus_router.get("/status")
@@ -292,11 +388,11 @@ async def bonus_status():
     get_or_create_inventory(season, DEFAULT_STOCK)
     return JSONResponse({
         "available": {
-            "silver":       has_stock(season, "silver", DEFAULT_STOCK),
-            "gold":         has_stock(season, "gold", DEFAULT_STOCK),
-            "platinum":     has_stock(season, "platinum", DEFAULT_STOCK),
-            "special":      has_stock(season, "special", DEFAULT_STOCK),
-            "angry_whales": has_stock(season, "angry_whales", DEFAULT_STOCK),
+            "silver":      has_stock(season, "silver", DEFAULT_STOCK),
+            "gold":        has_stock(season, "gold", DEFAULT_STOCK),
+            "platinum":    has_stock(season, "platinum", DEFAULT_STOCK),
+            "special":     has_stock(season, "special", DEFAULT_STOCK),
+            "angrywhales": has_stock(season, "angrywhales", DEFAULT_STOCK),
         },
         "season_id": season,
     })
@@ -308,11 +404,11 @@ async def bonus_reset():
     return JSONResponse({
         "ok": True,
         "available": {
-            "silver":       has_stock(season, "silver", DEFAULT_STOCK),
-            "gold":         has_stock(season, "gold", DEFAULT_STOCK),
-            "platinum":     has_stock(season, "platinum", DEFAULT_STOCK),
-            "special":      has_stock(season, "special", DEFAULT_STOCK),
-            "angry_whales": has_stock(season, "angry_whales", DEFAULT_STOCK),
+            "silver":      has_stock(season, "silver", DEFAULT_STOCK),
+            "gold":        has_stock(season, "gold", DEFAULT_STOCK),
+            "platinum":    has_stock(season, "platinum", DEFAULT_STOCK),
+            "special":     has_stock(season, "special", DEFAULT_STOCK),
+            "angrywhales": has_stock(season, "angrywhales", DEFAULT_STOCK),
         },
         "season_id": season,
     })
