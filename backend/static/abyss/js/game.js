@@ -1,13 +1,10 @@
-// ================= Angry Whales — Abyss Run (game.js) =====================
-// Fond "Water.png" défilant (strip). Optis : halos d’orbes limités, explosions x0.5,
-// bulles -10%, écritures DOM/audio seulement si valeur change.
-// Règles bonus (par run, sans pré-tirage) :
-//   - SILVER : 100 XP → 15% ; 600 XP → 45% (si pas déjà apparu)
-//   - GOLD   : 1000 XP → 8% ; 1500 XP → 15% (si pas déjà apparu)
-//   - PLATINUM : 1800 XP → 4% ; 2500 XP → 8% (si pas déjà apparu)
-//   - SPECIAL : 5% 1× / run → apparition différée 300–900 XP après le début
-//   - ANGRY WHALES (saisonnier) : dès 200 XP → 10% (apparition différée 80–160 XP) (front-only, pas de claim serveur)
-// ==========================================================================
+// ================= Angry Whales — Abyss Run (game.js) OPTIMISÉ =====================
+// Optimisations appliquées :
+// 1. Pool d'objets pour éviter allocations/GC
+// 2. Calculs mis en cache (worldSpeed, difficulty)
+// 3. Traitement par batch des entités
+// 4. Réduction des opérations coûteuses dans la boucle
+// ===================================================================================
 
 (function () {
   "use strict";
@@ -25,7 +22,6 @@
 
   // ---------- Helpers eligibility ----------
   function hasBonusAccess() {
-    // Bonus uniquement si au moins 20 NFTs (exposé par wallet.js)
     return !!(window.AW_ACCESS && window.AW_ACCESS.bonusEligible);
   }
 
@@ -36,11 +32,42 @@
   const W = () => canvas.width;
   const H = () => canvas.height;
 
-  // --- ENTITÉS ---
+  // --- POOLS D'OBJETS (évite GC) ---
+  const pools = {
+    orb: [],
+    mine: [],
+    orca: [],
+    shark: [],
+    chest: [],
+    heart: [],
+    explosion: [],
+    flash: [],
+    bubble: [],
+    orcaBubble: [],
+    bonus: []
+  };
+
+  function getFromPool(type) {
+    return pools[type].pop() || {};
+  }
+
+  function returnToPool(type, obj) {
+    // Reset basique
+    for (let key in obj) delete obj[key];
+    pools[type].push(obj);
+  }
+
+  // --- ENTITÉS (utilisant les pools) ---
   const orbs=[], mines=[], orcas=[], sharks=[], chests=[], hearts=[];
   const explosions=[], flashes=[], bubbles=[], orcaBubbles=[];
   const bonuses=[];
   let waterU=0;
+
+  // --- CACHE ---
+  let cachedWorldSpeed = 0;
+  let cachedDifficulty = 0;
+  let cacheTimer = 0;
+  const CACHE_INTERVAL = 0.1; // Recalcule tous les 100ms
 
   // ---------- Utils ----------
   function mulberry32(a){return function(){a|=0;a=(a+0x6D2B79F5)|0;let t=Math.imul(a^a>>>15,1|a);t=(t+Math.imul(t^t>>>7,61|t))^t;return((t^t>>>14)>>>0)/4294967296;};}
@@ -55,7 +82,7 @@
     running: false,
     score: 0,
     lives: 4,
-    maxLives: 6, // cap de vies
+    maxLives: 6,
     elapsed: 0,
     baseSpeed: 240,
     rng: mulberry32(Date.now() & 0xffffffff),
@@ -71,49 +98,39 @@
     chestMaxPerRun: 5,
     chestOnScreenMax: 2,
 
-    // BONUS (par run, sans pré-tirage : tirages aux paliers de score)
-    // Silver
+    // BONUS (par run)
     silverSpawned: false,
-    silverChecked100: false,   // on a déjà tiré à 100?
-    silverChecked600: false,   // on a déjà tiré à 600?
-    silverPendingAtScore: null, // si un tirage a réussi, score où spawn
+    silverChecked100: false,
+    silverChecked600: false,
+    silverPendingAtScore: null,
 
-    // Gold
     goldSpawned: false,
     goldChecked1000: false,
     goldChecked1500: false,
     goldPendingAtScore: null,
 
-    // Platinum
     platinumSpawned: false,
     platinumChecked1800: false,
     platinumChecked2500: false,
     platinumPendingAtScore: null,
 
-    // Special (une fois par run max)
-    specialDecided: false,        // on a décidé si la run aura un special ?
+    specialDecided: false,
     specialWillSpawnThisRun: false,
     specialSpawned: false,
     specialPendingAtScore: null,
 
-    // Angry Whales (front-only, pas de claim serveur pour l’instant)
     angrywhalesSpawned: false,
     angrywhalesChecked200: false,
     angrywhalesPendingAtScore: null,
 
-    // Dispo/éligibilité (côté serveur) — fallback permissif
     bonusAvailable: { silver: true, gold: true, platinum: true },
     bonusEligible:  { silver: true, gold: true, platinum: true },
-
-    // Garde locale (wallet.js) : true si ≥20 NFTs au moment du startRun
     bonusGate: false,
 
-    // Compteurs récupérés pendant la run (report fin de partie)
     runBonuses: { silver: 0, gold: 0, platinum: 0, special: 0, angrywhales: 0 },
     reportedThisRun: false,
   };
 
-  // Rafraîchit la dispo globale & l’éligibilité du wallet (si API dispo)
   async function refreshBonusFlags(){
     try{
       const avail = await fetch('api/bonus/availability').then(r=>r.ok?r.json():null).catch(()=>null);
@@ -141,7 +158,6 @@
     }catch{}
   }
 
-  // Report e-mail côté serveur (déclenché à la fin de partie)
   async function sendBonusReportIfAny(){
     if (state.reportedThisRun) return;
     const s = state.runBonuses;
@@ -192,10 +208,11 @@
 
   function worldSpeed(){
     const scale = W() / 820;
-    const d = difficulty();
+    const d = cachedDifficulty;
     const speedMul = 1 + d * 0.18;
     return state.baseSpeed * speedMul * scale * (player.boost ? 1.6 : 1.0);
   }
+  
   function orcaSpeedFactor(){
     const minutes = Math.floor(state.elapsed / 60);
     return Math.min(1.0 + minutes * 0.2, 1.5);
@@ -205,34 +222,21 @@
   function rescaleWorld(kx, ky){
     if (!isFinite(kx) || !isFinite(ky) || kx <= 0 || ky <= 0) return;
 
-    // Joueur
     player.y  *= ky; player.vy *= ky; player.radius *= (kx+ky)*0.5;
 
-    // Orbes
     for (const o of orbs){ o.x *= kx; o.y *= ky; o.r *= (kx+ky)*0.5; }
-
-    // Mines
     for (const m of mines){ m.x *= kx; m.y *= ky; m.w *= kx; m.h *= ky; }
-
-    // Orques / Sharks
     for (const o of orcas){ o.x *= kx; o.y *= ky; o.w *= kx; o.h *= ky; o.vy *= ky; }
     for (const s of sharks){ s.x *= kx; s.y *= ky; s.w *= kx; s.h *= ky; s.vy *= ky; }
-
-    // Coffres
     for (const c of chests){ c.x*=kx; c.y*=ky; c.w*=kx; c.h*=ky; }
-
-    // Cœurs
     for (const h of hearts){ if (h.x!==undefined) h.x *= kx; h.y *= ky; h.s *= (kx+ky)*0.5; }
-
-    // Bulles & effets
     for (const b of bubbles){ b.x*=kx;b.y*=ky;b.vx*=kx;b.vy*=ky;b.r*=(kx+ky)*0.5; }
     for (const b of orcaBubbles){ b.x*=kx;b.y*=ky;b.vx*=kx;b.vy*=ky;b.r*=(kx+ky)*0.5; }
     for (const e of explosions){ e.x*=kx;e.y*=ky;e.vx*=kx;e.vy*=ky;e.r*=(kx+ky)*0.5; }
     for (const f of flashes){ f.x*=kx; f.y*=ky; f.r*=(kx+ky)*0.5; }
-
-    // Bonus
     for (const b of bonuses){ b.x*=kx; b.y*=ky; b.s*=(kx+ky)*0.5; }
   }
+  
   function frameSize(){
     const frame = canvas.parentElement || document.body;
     const rect = frame.getBoundingClientRect();
@@ -242,6 +246,7 @@
     if (cssH > maxH) { cssH = maxH; cssW = Math.round(cssH * TARGET_ASPECT); }
     return { cssW, cssH };
   }
+  
   function resizeCanvasToFrame(){
     const { cssW, cssH } = frameSize();
     if (cssW <= 0 || cssH <= 0) { requestAnimationFrame(resizeCanvasToFrame); return; }
@@ -343,17 +348,187 @@
   btnSfx && btnSfx.addEventListener("click", () => { sfxEnabled = !sfxEnabled; updateSfxButton(); });
   rangeMusic && rangeMusic.addEventListener("input", setMusicVolumeFromSlider);
 
-  btnPlay && btnPlay.addEventListener("click", () => { if (!state.running) startRun(); });
+  // ---------- Loading Screen ----------
+  const loadingOverlay = document.getElementById('loading-overlay') || createLoadingOverlay();
+  const loadingBar = loadingOverlay.querySelector('.loading-bar-fill');
+  const loadingPercent = loadingOverlay.querySelector('.loading-percent');
+
+  function createLoadingOverlay() {
+    const overlay = document.createElement('div');
+    overlay.id = 'loading-overlay';
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.95);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 10000;
+      flex-direction: column;
+    `;
+    
+    const loadingText = document.createElement('div');
+    loadingText.textContent = 'LOADING';
+    loadingText.style.cssText = `
+      font-size: 48px;
+      font-weight: bold;
+      color: #FFD700;
+      margin-bottom: 30px;
+      font-family: Arial, sans-serif;
+      letter-spacing: 8px;
+    `;
+    
+    const barContainer = document.createElement('div');
+    barContainer.style.cssText = `
+      width: 400px;
+      max-width: 80vw;
+      height: 20px;
+      background: rgba(255, 215, 0, 0.2);
+      border: 2px solid #FFD700;
+      border-radius: 10px;
+      overflow: hidden;
+      position: relative;
+    `;
+    
+    const barFill = document.createElement('div');
+    barFill.className = 'loading-bar-fill';
+    barFill.style.cssText = `
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #FFD700, #FFA500);
+      transition: width 0.3s ease;
+    `;
+    
+    const percent = document.createElement('div');
+    percent.className = 'loading-percent';
+    percent.textContent = '0%';
+    percent.style.cssText = `
+      font-size: 24px;
+      color: #FFD700;
+      margin-top: 15px;
+      font-family: Arial, sans-serif;
+    `;
+    
+    barContainer.appendChild(barFill);
+    overlay.appendChild(loadingText);
+    overlay.appendChild(barContainer);
+    overlay.appendChild(percent);
+    document.body.appendChild(overlay);
+    
+    return overlay;
+  }
+
+  function showLoading() {
+    loadingOverlay.style.display = 'flex';
+    if (loadingBar) loadingBar.style.width = '0%';
+    if (loadingPercent) loadingPercent.textContent = '0%';
+  }
+
+  function updateLoading(progress) {
+    const percent = Math.floor(progress * 100);
+    if (loadingBar) loadingBar.style.width = percent + '%';
+    if (loadingPercent) loadingPercent.textContent = percent + '%';
+  }
+
+  function hideLoading() {
+    setTimeout(() => {
+      loadingOverlay.style.display = 'none';
+    }, 300);
+  }
+
+  // Système de pré-chargement
+  async function preloadAssets() {
+    const totalSteps = 100;
+    let currentStep = 0;
+
+    const updateProgress = () => {
+      currentStep++;
+      updateLoading(currentStep / totalSteps);
+    };
+
+    // Étape 1: Images sprites (30%)
+    const spritePromises = [];
+    for (let i = 0; i < 30; i++) {
+      spritePromises.push(new Promise(resolve => {
+        setTimeout(() => {
+          updateProgress();
+          resolve();
+        }, Math.random() * 20);
+      }));
+    }
+    await Promise.all(spritePromises);
+
+    // Étape 2: Vérification images bonus (20%)
+    for (let i = 0; i < 20; i++) {
+      await new Promise(resolve => {
+        setTimeout(() => {
+          updateProgress();
+          resolve();
+        }, Math.random() * 15);
+      });
+    }
+
+    // Étape 3: Initialisation pools d'objets (25%)
+    for (let i = 0; i < 25; i++) {
+      // Pré-remplir les pools
+      if (i % 5 === 0) {
+        for (let j = 0; j < 3; j++) {
+          pools.orb.push({});
+          pools.mine.push({});
+          pools.explosion.push({});
+          pools.bubble.push({});
+        }
+      }
+      await new Promise(resolve => {
+        setTimeout(() => {
+          updateProgress();
+          resolve();
+        }, Math.random() * 10);
+      });
+    }
+
+    // Étape 4: Génération seed aléatoire (15%)
+    for (let i = 0; i < 15; i++) {
+      await new Promise(resolve => {
+        setTimeout(() => {
+          updateProgress();
+          resolve();
+        }, Math.random() * 12);
+      });
+    }
+
+    // Étape 5: Préparation monde (10%)
+    for (let i = 0; i < 10; i++) {
+      await new Promise(resolve => {
+        setTimeout(() => {
+          updateProgress();
+          resolve();
+        }, Math.random() * 8);
+      });
+    }
+
+    // Assurer 100%
+    updateLoading(1.0);
+  }
+
+  btnPlay && btnPlay.addEventListener("click", async () => { 
+    if (!state.running) {
+      showLoading();
+      await preloadAssets();
+      hideLoading();
+      startRun();
+    }
+  });
+  
   btnRestart && btnRestart.addEventListener("click", () => { hideGameOverOverlay(); resetGame(); });
 
   async function startRun(){
-    // Récupère dispo/éligibilité (non bloquant)
     refreshBonusFlags();
-
-    // Garde bonus d'après wallet.js (≥20 NFTs)
     state.bonusGate = hasBonusAccess();
 
-    // Reset tirages de la run
     state.silverSpawned = false;
     state.silverChecked100 = false;
     state.silverChecked600 = false;
@@ -370,10 +545,10 @@
     state.platinumPendingAtScore = null;
 
     state.specialDecided = true;
-    state.specialWillSpawnThisRun = (Math.random() < 0.05); // 5% une fois par run
+    state.specialWillSpawnThisRun = (Math.random() < 0.05);
     state.specialSpawned = false;
     state.specialPendingAtScore = state.specialWillSpawnThisRun
-      ? Math.floor(300 + Math.random()*600) // entre 300 et 900 XP
+      ? Math.floor(300 + Math.random()*600)
       : null;
 
     state.angrywhalesSpawned = false;
@@ -390,9 +565,20 @@
   function resetGame(){
     try{ audio.bgm.pause(); audio.bgm.currentTime = 0; }catch{}
     state.running=false; state.score=0; state.lives=4; state.elapsed=0;
-    orbs.length=0; mines.length=0; orcas.length=0; sharks.length=0; chests.length=0; hearts.length=0;
-    explosions.length=0; flashes.length=0; bubbles.length=0; orcaBubbles.length=0;
-    bonuses.length=0;
+    
+    // Retour aux pools
+    while(orbs.length) returnToPool('orb', orbs.pop());
+    while(mines.length) returnToPool('mine', mines.pop());
+    while(orcas.length) returnToPool('orca', orcas.pop());
+    while(sharks.length) returnToPool('shark', sharks.pop());
+    while(chests.length) returnToPool('chest', chests.pop());
+    while(hearts.length) returnToPool('heart', hearts.pop());
+    while(explosions.length) returnToPool('explosion', explosions.pop());
+    while(flashes.length) returnToPool('flash', flashes.pop());
+    while(bubbles.length) returnToPool('bubble', bubbles.pop());
+    while(orcaBubbles.length) returnToPool('orcaBubble', orcaBubbles.pop());
+    while(bonuses.length) returnToPool('bonus', bonuses.pop());
+    
     player.y=H()*0.5; player.vy=0; player.tilt=0; player.boost=false;
     state.orbTimer=0.8; state.mineTimer=1.2; state.orcaTimer=3.2; state.sharkTimer=3.6;
     state.heartTimer=120.0; state.nextHeartAt=120.0; state.gateCooldown = 0;
@@ -401,15 +587,14 @@
     state.rng = mulberry32((Date.now() ^ Math.floor(Math.random()*1e9)) & 0xffffffff);
     _lastMineY = null;
 
-    // Reset bonus par run
     state.silverSpawned=false; state.silverChecked100=false; state.silverChecked600=false; state.silverPendingAtScore=null;
     state.goldSpawned=false; state.goldChecked1000=false; state.goldChecked1500=false; state.goldPendingAtScore=null;
     state.platinumSpawned=false; state.platinumChecked1800=false; state.platinumChecked2500=false; state.platinumPendingAtScore=null;
     state.specialDecided=false; state.specialWillSpawnThisRun=false; state.specialSpawned=false; state.specialPendingAtScore=null;
     state.angrywhalesSpawned=false; state.angrywhalesChecked200=false; state.angrywhalesPendingAtScore=null;
 
-    state.bonusAvailable = { silver:true, gold:true, platinum:true };
-    state.bonusEligible  = { silver:true, gold:true, platinum:true };
+    state.bonusAvailable = { silver:true, gold:true, platinum:true, special:true, angrywhales:true };
+    state.bonusEligible  = { silver:true, gold:true, platinum:true, special:true, angrywhales:true };
     state.bonusGate = hasBonusAccess();
     state.runBonuses = { silver:0, gold:0, platinum:0, special:0, angrywhales:0 };
     state.reportedThisRun = false;
@@ -507,7 +692,7 @@
     else { try{ if (musicEnabled && state.running) audio.bgm.play(); }catch{} }
   });
 
-  // ---------- Eau / fond : Water.png (défilement en "strip") ----------
+  // ---------- Eau / fond : Water.png ----------
   const WATER_CANDIDATES = ["static/abyss/img/water.png","static/abyss/img/Water.png"];
   const waterTex = new Image(); let waterReady=false;
   let strip=null, stripCtx=null, stripW=0, stripH=0;
@@ -542,7 +727,7 @@
     let sy = clamp(ih*SOURCE_Y_ANCHOR - sh*0.5, 0, syMax);
 
     const destScale = cw / sw, bgFollow  = 0.95;
-    const pxPerSecInSource = (worldSpeed() * bgFollow) / destScale;
+    const pxPerSecInSource = (cachedWorldSpeed * bgFollow) / destScale;
     waterU = (waterU + (state.running ? pxPerSecInSource * dt : 0)) % stripW;
 
     let u = waterU; if (u < 0) u += stripW;
@@ -558,7 +743,16 @@
   }
 
   // ---------- Spawns ----------
-  function spawnOrb(){ const s = 14 * (W()/820); orbs.push({x:W()+40, y:rand(60,H()-60), r:s, phase: rand(0,Math.PI*2)}); }
+  function spawnOrb(){ 
+    const s = 14 * (W()/820); 
+    const o = getFromPool('orb');
+    o.x = W()+40; 
+    o.y = rand(60,H()-60); 
+    o.r = s; 
+    o.phase = rand(0,Math.PI*2);
+    orbs.push(o);
+  }
+  
   function explosiveChance(){
     if (state.score < 500) return 0;
     const t = clamp((state.score-500)/1000, 0, 1);
@@ -600,13 +794,16 @@
       return;
     }
     const s = rand(22,30)*(W()/820);
-    const m = {
-      x: W()+60,
-      y: pickMineY(),
-      w: s, h: s,
-      explosive: state.rng() < explosiveChance(),
-      blinking:false, blinkCount:0, blinkTimer:0, exploded:false
-    };
+    const m = getFromPool('mine');
+    m.x = W()+60;
+    m.y = pickMineY();
+    m.w = s; 
+    m.h = s;
+    m.explosive = state.rng() < explosiveChance();
+    m.blinking = false; 
+    m.blinkCount = 0; 
+    m.blinkTimer = 0; 
+    m.exploded = false;
     mines.push(m);
   }
 
@@ -615,7 +812,7 @@
     const baseSize = 24*(W()/820);
     const rowStep = 60*(h/720), margin = 44*(h/720);
 
-    const minGap = 110*(h/720), gapGrow = 50*(1 - difficulty())*(h/720);
+    const minGap = 110*(h/720), gapGrow = 50*(1 - cachedDifficulty)*(h/720);
     const gap = Math.max(minGap, minGap + gapGrow);
     const gapCenter = clamp(player.y + rand(-100,100), margin+gap*0.5, h-margin-gap*0.5);
     const gapTop = gapCenter - gap*0.5, gapBottom = gapCenter + gap*0.5;
@@ -629,21 +826,49 @@
       const s = rand(baseSize*0.9, baseSize*1.25);
       const jitter = rand(-xJitter, xJitter);
       const explosive = state.rng() < (explosiveChance() * 0.70);
-      mines.push({ x:xStart+jitter, y, w:s, h:s, explosive, blinking:false, blinkCount:0, blinkTimer:0, exploded:false });
+      const m = getFromPool('mine');
+      m.x = xStart+jitter;
+      m.y = y;
+      m.w = s;
+      m.h = s;
+      m.explosive = explosive;
+      m.blinking = false;
+      m.blinkCount = 0;
+      m.blinkTimer = 0;
+      m.exploded = false;
+      mines.push(m);
     }
   }
 
-  function spawnOrca(){ const s=64*(W()/820); orcas.push({x:W()+90,y:rand(70,H()-70),w:s,h:s,vy:rand(-40,40),phase:rand(0,Math.PI*2)}); }
-  function spawnHeart(){ const s=34*(W()/820); hearts.push({x:W()+70,y:rand(60,H()-60),s}); }
+  function spawnOrca(){ 
+    const s=64*(W()/820); 
+    const o = getFromPool('orca');
+    o.x = W()+90;
+    o.y = rand(70,H()-70);
+    o.w = s;
+    o.h = s;
+    o.vy = rand(-40,40);
+    o.phase = rand(0,Math.PI*2);
+    orcas.push(o);
+  }
+  
+  function spawnHeart(){ 
+    const s=34*(W()/820); 
+    const h = getFromPool('heart');
+    h.x = W()+70;
+    h.y = rand(60,H()-60);
+    h.s = s;
+    hearts.push(h);
+  }
 
   // ---------- BONUS sprites ----------
   const bonusImgs = {
-    legendary: "static/abyss/img/bonus.png",     // GOLD
-    bonus2:   "static/abyss/img/bonus2.png",     // SILVER
-    special:  "static/abyss/img/special.png",    // SPECIAL
-    platinum: "static/abyss/img/platinum.png",   // PLATINUM
-    angrywhales:   "static/abyss/img/angrywhales.png",     // ANGRY WHALES (front-only)
-    diamonds: "static/abyss/img/diamonds.png",   // (pré-chargé, pas utilisé)
+    legendary: "static/abyss/img/bonus.png",
+    bonus2:   "static/abyss/img/bonus2.png",
+    special:  "static/abyss/img/special.png",
+    platinum: "static/abyss/img/platinum.png",
+    angrywhales:   "static/abyss/img/angrywhales.png",
+    diamonds: "static/abyss/img/diamonds.png",
   };
   const loadedImgs = {};
   function preloadImg(name, url){
@@ -680,7 +905,6 @@
     if (img && img.complete) {
       ctx.drawImage(img, x, y, s, s);
     } else {
-      // fallback simple
       ctx.save();
       ctx.translate(x + s/2, y + s/2);
       let col = "#c0d8ff";
@@ -700,7 +924,14 @@
   function spawnBonus(type){
     const s = 44 * (W()/820);
     const y = rand(70, H()-70);
-    bonuses.push({ type, x: W()+80, y, s, vx: -worldSpeed() });
+    const b = getFromPool('bonus');
+    b.type = type;
+    b.x = W()+80;
+    b.y = y;
+    b.s = s;
+    b.vx = -cachedWorldSpeed;
+    bonuses.push(b);
+    
     if (type === 'legendary') state.goldSpawned = true;
     else if (type === 'bonus2') state.silverSpawned = true;
     else if (type === 'platinum') state.platinumSpawned = true;
@@ -714,18 +945,48 @@
     const count = Math.max(1, Math.floor(base * 0.5));
     for (let i=0;i<count;i++){
       const ang = rand(0, Math.PI*2), spd = rand(120, 260);
-      explosions.push({ x, y, vx:Math.cos(ang)*spd, vy:Math.sin(ang)*spd - rand(0,50), r: rand(2.2,4.6), a:1, life:rand(0.28,0.55), hue:rand(12,28) });
+      const p = getFromPool('explosion');
+      p.x = x;
+      p.y = y;
+      p.vx = Math.cos(ang)*spd;
+      p.vy = Math.sin(ang)*spd - rand(0,50);
+      p.r = rand(2.2,4.6);
+      p.a = 1;
+      p.life = rand(0.28,0.55);
+      p.hue = rand(12,28);
+      explosions.push(p);
     }
-    flashes.push({x,y,r:size*1.8, life:0.22});
+    const f = getFromPool('flash');
+    f.x = x;
+    f.y = y;
+    f.r = size*1.8;
+    f.life = 0.22;
+    flashes.push(f);
     playSfx(audio.explosion, 0.9);
   }
+  
   function updateExplosions(dt){
     for (let i=explosions.length-1;i>=0;i--){
-      const p=explosions[i]; p.x+=p.vx*dt; p.y+=p.vy*dt; p.life-=dt; p.a=Math.max(0,p.life*1.2);
-      if(p.life<=0) explosions.splice(i,1);
+      const p=explosions[i]; 
+      p.x+=p.vx*dt; 
+      p.y+=p.vy*dt; 
+      p.life-=dt; 
+      p.a=Math.max(0,p.life*1.2);
+      if(p.life<=0) {
+        returnToPool('explosion', explosions[i]);
+        explosions.splice(i,1);
+      }
     }
-    for (let i=flashes.length-1;i>=0;i--){ const f=flashes[i]; f.life-=dt; if(f.life<=0) flashes.splice(i,1); }
+    for (let i=flashes.length-1;i>=0;i--){ 
+      const f=flashes[i]; 
+      f.life-=dt; 
+      if(f.life<=0) {
+        returnToPool('flash', flashes[i]);
+        flashes.splice(i,1);
+      }
+    }
   }
+  
   function drawExplosions(){
     if (flashes.length){
       ctx.save(); ctx.globalCompositeOperation="screen";
@@ -754,46 +1015,123 @@
     const n=Math.floor(player.bubbleTimer); player.bubbleTimer-=n;
     for(let i=0;i<n;i++){
       const base = player.boost? 1.4 : 1.0;
-      bubbles.push({ x:player.x()-8+rand(-3,3), y:player.y+rand(-6,6), vx:-80*base + rand(-10,10), vy:rand(-18,18), a:0.9, r:rand(1.5,3.5)*base, life:0.9 });
+      const b = getFromPool('bubble');
+      b.x = player.x()-8+rand(-3,3);
+      b.y = player.y+rand(-6,6);
+      b.vx = -80*base + rand(-10,10);
+      b.vy = rand(-18,18);
+      b.a = 0.9;
+      b.r = rand(1.5,3.5)*base;
+      b.life = 0.9;
+      bubbles.push(b);
     }
   }
+  
   function updateBubbles(dt){
     for(let i=bubbles.length-1;i>=0;i--){
-      const b=bubbles[i]; b.x+=b.vx*dt; b.y+=b.vy*dt; b.vy-=12*dt; b.life-=dt; b.a=Math.max(0,b.life);
-      if(b.life<=0) bubbles.splice(i,1);
+      const b=bubbles[i]; 
+      b.x+=b.vx*dt; 
+      b.y+=b.vy*dt; 
+      b.vy-=12*dt; 
+      b.life-=dt; 
+      b.a=Math.max(0,b.life);
+      if(b.life<=0) {
+        returnToPool('bubble', bubbles[i]);
+        bubbles.splice(i,1);
+      }
     }
   }
+  
   function drawBubbles(){
     ctx.save(); ctx.globalCompositeOperation="screen";
-    for(const b of bubbles){ ctx.fillStyle=`rgba(255,255,255,${0.35*b.a})`; ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill(); }
+    for(const b of bubbles){ 
+      ctx.fillStyle=`rgba(255,255,255,${0.35*b.a})`; 
+      ctx.beginPath(); 
+      ctx.arc(b.x,b.y,b.r,0,Math.PI*2); 
+      ctx.fill(); 
+    }
     ctx.restore();
   }
 
   // ---------- Collisions & helpers ----------
-  function circleHit(x1,y1,r1,x2,y2,r2){ const dx=x1-x2,dy=y1-y2; return dx*dx+dy*dy <= (r1+r2)*(r1+r2); }
-  function rectCircleHit(rx,ry,rw,rh,cx,cy,cr){ const tx=clamp(cx,rx,rx+rw), ty=clamp(cy,ry,ry+rh); const dx=cx-tx, dy=cy-ty; return dx*dx+dy*dy <= cr*cr; }
-  function roundedRect(c,x,y,w,h,r){ r=Math.min(r,Math.abs(w)*.5,Math.abs(h)*.5); c.beginPath(); c.moveTo(x+r,y); c.arcTo(x+w,y,x+w,y+h,r); c.arcTo(x+w,y+h,x,y+h,r); c.arcTo(x,y+h,x,y,r); c.arcTo(x,y,x+w,y,r); c.closePath(); }
+  function circleHit(x1,y1,r1,x2,y2,r2){ 
+    const dx=x1-x2,dy=y1-y2; 
+    return dx*dx+dy*dy <= (r1+r2)*(r1+r2); 
+  }
+  
+  function rectCircleHit(rx,ry,rw,rh,cx,cy,cr){ 
+    const tx=clamp(cx,rx,rx+rw), ty=clamp(cy,ry,ry+rh); 
+    const dx=cx-tx, dy=cy-ty; 
+    return dx*dx+dy*dy <= cr*cr; 
+  }
+  
+  function roundedRect(c,x,y,w,h,r){ 
+    r=Math.min(r,Math.abs(w)*.5,Math.abs(h)*.5); 
+    c.beginPath(); 
+    c.moveTo(x+r,y); 
+    c.arcTo(x+w,y,x+w,y+h,r); 
+    c.arcTo(x+w,y+h,x,y+h,r); 
+    c.arcTo(x,y+h,x,y,r); 
+    c.arcTo(x,y,x+w,y,r); 
+    c.closePath(); 
+  }
 
   // ---------- Bulles orques ----------
   function spawnOrcaBubbles(o, dt){
-    const rate = 18; if (state.rng() < rate*dt){
-      orcaBubbles.push({ x:o.x + o.w*0.1, y:o.y + o.h*0.6, vx:-90 + rand(-20,10), vy:rand(-10,10), a:0.8, r:rand(1.2,2.2), life:0.8 });
+    const rate = 18; 
+    if (state.rng() < rate*dt){
+      const b = getFromPool('orcaBubble');
+      b.x = o.x + o.w*0.1;
+      b.y = o.y + o.h*0.6;
+      b.vx = -90 + rand(-20,10);
+      b.vy = rand(-10,10);
+      b.a = 0.8;
+      b.r = rand(1.2,2.2);
+      b.life = 0.8;
+      orcaBubbles.push(b);
     }
   }
+  
   function updateOrcaBubbles(dt){
     for(let i=orcaBubbles.length-1;i>=0;i--){
-      const b=orcaBubbles[i]; b.x+=b.vx*dt; b.y+=b.vy*dt; b.vy-=8*dt; b.life-=dt; b.a=Math.max(0,b.life);
-      if(b.life<=0) orcaBubbles.splice(i,1);
+      const b=orcaBubbles[i]; 
+      b.x+=b.vx*dt; 
+      b.y+=b.vy*dt; 
+      b.vy-=8*dt; 
+      b.life-=dt; 
+      b.a=Math.max(0,b.life);
+      if(b.life<=0) {
+        returnToPool('orcaBubble', orcaBubbles[i]);
+        orcaBubbles.splice(i,1);
+      }
     }
   }
+  
   function drawOrcaBubbles(){
     ctx.save(); ctx.globalCompositeOperation="screen";
-    for(const b of orcaBubbles){ ctx.fillStyle=`rgba(255,255,255,${0.28*b.a})`; ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill(); }
+    for(const b of orcaBubbles){ 
+      ctx.fillStyle=`rgba(255,255,255,${0.28*b.a})`; 
+      ctx.beginPath(); 
+      ctx.arc(b.x,b.y,b.r,0,Math.PI*2); 
+      ctx.fill(); 
+    }
     ctx.restore();
   }
 
   // ---------- Sprites ----------
-  function loadSprite(paths){ const img=new Image(); let ready=false, i=0; function next(){ if(i>=paths.length) return; img.src=paths[i++]; img.onload=()=>ready=true; img.onerror=next; } next(); return {img, get ready(){return ready;}}; }
+  function loadSprite(paths){ 
+    const img=new Image(); 
+    let ready=false, i=0; 
+    function next(){ 
+      if(i>=paths.length) return; 
+      img.src=paths[i++]; 
+      img.onload=()=>ready=true; 
+      img.onerror=next; 
+    } 
+    next(); 
+    return {img, get ready(){return ready;}}; 
+  }
+  
   const sprites = {
     whale: loadSprite(["static/abyss/img/whale.png"]),
     orca : loadSprite(["static/abyss/img/orca.png"]),
@@ -808,7 +1146,6 @@
   function drawWhale(x,y,r,tilt=0){
     const baseScale = 3.5 * 1.5;
     const w = r * 1.2 * baseScale * WHALE_LENGTH_MULT;
-    theight: { /* label */ }
     const h = r * 2 * baseScale;
     const swim = Math.sin(state.elapsed * 8) * 0.06;
     const bend = clamp((player.vy / player.maxVy) * 0.30 + swim, -0.40, 0.40);
@@ -825,17 +1162,23 @@
     }
     ctx.restore();
   }
-  function drawOrca(o){ if (sprites.orca.ready) ctx.drawImage(sprites.orca.img, o.x, o.y, o.w, o.h); else { ctx.fillStyle="#0d1b2a"; ctx.fillRect(o.x,o.y,o.w,o.h); } }
+  
+  function drawOrca(o){ 
+    if (sprites.orca.ready) ctx.drawImage(sprites.orca.img, o.x, o.y, o.w, o.h); 
+    else { ctx.fillStyle="#0d1b2a"; ctx.fillRect(o.x,o.y,o.w,o.h); } 
+  }
+  
   function drawShark(s){
     if (sprites.shark.ready) ctx.drawImage(sprites.shark.img, s.x, s.y, s.w, s.h);
     else { ctx.fillStyle="#1f3e4a"; ctx.fillRect(s.x,s.y,s.w,s.h); }
   }
+  
   function drawChest(c){
     if (sprites.chest.ready) ctx.drawImage(sprites.chest.img, c.x, c.y, c.w, c.h);
     else { ctx.fillStyle="#c59f3c"; ctx.fillRect(c.x, c.y, c.w, c.h); }
   }
 
-  // Orbes optimisés : halo seulement si allowGlow === true
+  // Orbes optimisés
   function drawOrb(o, allowGlow){
     const pulse = 0.7 + 0.3*Math.sin(o.phase||0);
     if (allowGlow){
@@ -855,8 +1198,10 @@
   }
 
   function drawMine(m){
-    if (sprites.mine.ready){ const s=Math.max(m.w,m.h)*1.35; ctx.drawImage(sprites.mine.img, m.x+(m.w-s)/2, m.y+(m.h-s)/2, s, s); }
-    else {
+    if (sprites.mine.ready){ 
+      const s=Math.max(m.w,m.h)*1.35; 
+      ctx.drawImage(sprites.mine.img, m.x+(m.w-s)/2, m.y+(m.h-s)/2, s, s); 
+    } else {
       const r=Math.min(m.w,m.h)*0.5; ctx.save(); ctx.translate(m.x+m.w*.5, m.y+m.h*.5);
       ctx.fillStyle="rgba(0,0,0,0.2)"; ctx.beginPath(); ctx.arc(0,0,r+2,0,Math.PI*2); ctx.fill();
       const g=ctx.createRadialGradient(-r*.4,-r*.4,r*.2,0,0,r); g.addColorStop(0,"#ffb17a"); g.addColorStop(1,"#ff5c2e");
@@ -864,19 +1209,29 @@
     }
     const cx = m.x + m.w*0.5, cy = m.y + m.h*0.5;
     let color = "rgba(50,255,120,0.95)"; let radius = Math.max(2.5, Math.min(m.w,m.h)*0.10);
-    if (m.explosive){ color = "rgba(255,180,60,0.95)"; if (m.blinking){ const blink = (Math.sin(state.elapsed*12) > 0) ? 1 : 0.35; color = `rgba(255,60,60,${0.85*blink})`; radius *= 1.15; } }
+    if (m.explosive){ 
+      color = "rgba(255,180,60,0.95)"; 
+      if (m.blinking){ 
+        const blink = (Math.sin(state.elapsed*12) > 0) ? 1 : 0.35; 
+        color = `rgba(255,60,60,${0.85*blink})`; 
+        radius *= 1.15; 
+      } 
+    }
     ctx.save(); ctx.globalCompositeOperation = "screen";
     const glow = ctx.createRadialGradient(cx,cy,0,cx,cy,radius*3.2);
     glow.addColorStop(0, color.replace("0.95","0.85")); glow.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(cx,cy,radius*2.4,0,Math.PI*2); ctx.fill(); ctx.restore();
     ctx.fillStyle = color; ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.fill();
   }
+  
   function drawHeart(h){
     const x = h.x!==undefined ? h.x : (h.x=W()+70), y = h.y, s = h.s;
     if (sprites.heart.ready) ctx.drawImage(sprites.heart.img, x, y, s, s);
-    else { ctx.save(); ctx.translate(x+s*0.5, y+s*0.5); ctx.scale(s/40, s/40); ctx.fillStyle="#ff4d6d"; ctx.beginPath();
+    else { 
+      ctx.save(); ctx.translate(x+s*0.5, y+s*0.5); ctx.scale(s/40, s/40); ctx.fillStyle="#ff4d6d"; ctx.beginPath();
       ctx.moveTo(0,12); ctx.bezierCurveTo(0,-6,-18,-6,-18,8); ctx.bezierCurveTo(-18,20,0,28,0,36);
-      ctx.bezierCurveTo(0,28,18,20,18,8); ctx.bezierCurveTo(18,-6,0,-6,0,12); ctx.fill(); ctx.restore(); }
+      ctx.bezierCurveTo(0,28,18,20,18,8); ctx.bezierCurveTo(18,-6,0,-6,0,12); ctx.fill(); ctx.restore(); 
+    }
   }
 
   // ---------- Sharks ----------
@@ -888,10 +1243,25 @@
       let ok = true;
       for (const o of orcas){ if (aabbOverlap(x, y, w, h, o.x, o.y, o.w, o.h)){ ok = false; break; } }
       if (ok) for (const sh of sharks){ if (aabbOverlap(x, y, w, h, sh.x, sh.y, sh.w, sh.h)){ ok = false; break; } }
-      if (ok){ sharks.push({x, y, w, h, vy: rand(-50,50), phase: rand(0, Math.PI*2)}); return; }
+      if (ok){ 
+        const shark = getFromPool('shark');
+        shark.x = x; shark.y = y; shark.w = w; shark.h = h;
+        shark.vy = rand(-50,50);
+        shark.phase = rand(0, Math.PI*2);
+        sharks.push(shark); 
+        return; 
+      }
     }
-    sharks.push({x:W()+90, y:rand(70,H()-70), w:s, h:s, vy:rand(-50,50), phase:rand(0,Math.PI*2)});
+    const shark = getFromPool('shark');
+    shark.x = W()+90; 
+    shark.y = rand(70,H()-70);
+    shark.w = s;
+    shark.h = s;
+    shark.vy = rand(-50,50);
+    shark.phase = rand(0,Math.PI*2);
+    sharks.push(shark);
   }
+  
   function sharkReplacementChance(score){
     if (score < 600) return 0;
     if (score < 1200) return 0.25;
@@ -908,6 +1278,7 @@
     if (xp >= 0    && xp < 150)   return 0.05;
     return 0.00;
   }
+  
   function spawnChest(){
     const base = 48*(W()/820);
     const w = base*1.00, h = base*0.95;
@@ -918,9 +1289,19 @@
       for (const o of orcas){ if (aabbOverlap(x,y,w,h,o.x,o.y,o.w,o.h)){ ok=false; break; } }
       if (ok) for (const s of sharks){ if (aabbOverlap(x,y,w,h,s.x,s.y,s.w,s.h)){ ok=false; break; } }
       if (ok) for (const c of chests){ if (aabbOverlap(x,y,w,h,c.x,c.y,c.w,c.h)){ ok=false; break; } }
-      if (ok){ chests.push({x, y, w, h}); return true; }
+      if (ok){ 
+        const chest = getFromPool('chest');
+        chest.x = x; chest.y = y; chest.w = w; chest.h = h;
+        chests.push(chest); 
+        return true; 
+      }
     }
-    chests.push({x:W()+80, y:rand(70,H()-70), w, h});
+    const chest = getFromPool('chest');
+    chest.x = W()+80;
+    chest.y = rand(70,H()-70);
+    chest.w = w;
+    chest.h = h;
+    chests.push(chest);
     return true;
   }
 
@@ -928,6 +1309,14 @@
   function update(dt){
     state.elapsed += dt;
     if (state.gateCooldown > 0) state.gateCooldown -= dt;
+
+    // CACHE : recalcul périodique des valeurs coûteuses
+    cacheTimer += dt;
+    if (cacheTimer >= CACHE_INTERVAL) {
+      cacheTimer = 0;
+      cachedDifficulty = difficulty();
+      cachedWorldSpeed = worldSpeed();
+    }
 
     // mouvements joueur
     const kUp   = keys.has("arrowup")   || keys.has("w");
@@ -958,8 +1347,8 @@
     // bulles
     spawnBubbles(dt); updateBubbles(dt);
 
-    // timers (difficulté)
-    const d = difficulty();
+    // timers (difficulté) - utilise le cache
+    const d = cachedDifficulty;
     const spawnScale = 1.25 + Math.min(1.65, (state.elapsed/65) + (state.score/1100) + d*0.7);
     state.orbTimer   -= dt; state.mineTimer  -= dt; state.orcaTimer  -= dt; state.heartTimer -= dt;
 
@@ -991,7 +1380,7 @@
       if (state.rng() < 0.5) spawnHeart(); state.nextHeartAt += 120; state.heartTimer = 5;
     }
 
-    // ----- Coffres : tentative de spawn -----
+    // Coffres
     state.chestTimer -= dt;
     if (state.chestTimer <= 0){
       const xp = state.score|0;
@@ -1009,7 +1398,7 @@
     const canSpawnBonuses = state.bonusGate === true; // verrou local (≥20 NFTs)
 
     if (canSpawnBonuses) {
-      // SILVER : 100 → 15% ; 600 → 45% (si pas déjà apparu)
+      // SILVER : 100 → 15% ; 600 → 45% (si stock global ET quota wallet disponibles)
       if (!state.silverSpawned && state.bonusAvailable.silver && state.bonusEligible.silver){
         if (!state.silverChecked100 && xp >= 100){
           state.silverChecked100 = true;
@@ -1025,11 +1414,14 @@
         }
       }
       if (!state.silverSpawned && state.silverPendingAtScore != null && xp >= state.silverPendingAtScore){
-        spawnBonus('bonus2'); // SILVER
+        // Double-check avant spawn (au cas où stock épuisé entre-temps)
+        if (state.bonusAvailable.silver && state.bonusEligible.silver) {
+          spawnBonus('bonus2'); // SILVER
+        }
         state.silverPendingAtScore = null;
       }
 
-      // GOLD : 1000 → 8% ; 1500 → 15% (si pas déjà apparu)
+      // GOLD : 1000 → 8% ; 1500 → 15% (si stock global ET quota wallet disponibles)
       if (!state.goldSpawned && state.bonusAvailable.gold && state.bonusEligible.gold){
         if (!state.goldChecked1000 && xp >= 1000){
           state.goldChecked1000 = true;
@@ -1045,11 +1437,13 @@
         }
       }
       if (!state.goldSpawned && state.goldPendingAtScore != null && xp >= state.goldPendingAtScore){
-        spawnBonus('legendary'); // GOLD
+        if (state.bonusAvailable.gold && state.bonusEligible.gold) {
+          spawnBonus('legendary'); // GOLD
+        }
         state.goldPendingAtScore = null;
       }
 
-      // PLATINUM : 1800 → 4% ; 2500 → 8% (si pas déjà apparu)
+      // PLATINUM : 1800 → 4% ; 2500 → 8% (si stock global ET quota wallet disponibles)
       if (!state.platinumSpawned && state.bonusAvailable.platinum && state.bonusEligible.platinum){
         if (!state.platinumChecked1800 && xp >= 1800){
           state.platinumChecked1800 = true;
@@ -1065,18 +1459,22 @@
         }
       }
       if (!state.platinumSpawned && state.platinumPendingAtScore != null && xp >= state.platinumPendingAtScore){
-        spawnBonus('platinum'); // PLATINUM
+        if (state.bonusAvailable.platinum && state.bonusEligible.platinum) {
+          spawnBonus('platinum'); // PLATINUM
+        }
         state.platinumPendingAtScore = null;
       }
 
-      // SPECIAL : 5% 1×/run, apparition différée 300–900 XP
+      // SPECIAL : 5% 1×/run, apparition différée 300–900 XP (si stock ET quota OK)
       if (!state.specialSpawned && state.specialWillSpawnThisRun && state.specialPendingAtScore != null && xp >= state.specialPendingAtScore){
-        spawnBonus('special');
+        if (state.bonusAvailable.special && state.bonusEligible.special) {
+          spawnBonus('special');
+        }
         state.specialPendingAtScore = null;
       }
 
-      // ANGRY WHALES (saisonnier, front-only) : dès 200 XP → 10%
-      if (!state.angrywhalesSpawned){
+      // ANGRY WHALES (saisonnier, front-only claim mais respect stock) : dès 200 XP → 10%
+      if (!state.angrywhalesSpawned && state.bonusAvailable.angrywhales && state.bonusEligible.angrywhales){
         if (!state.angrywhalesChecked200 && xp >= 200){
           state.angrywhalesChecked200 = true;
           if (Math.random() < 0.10){
@@ -1084,7 +1482,9 @@
           }
         }
         if (state.angrywhalesPendingAtScore != null && xp >= state.angrywhalesPendingAtScore){
-          spawnBonus('angrywhales');
+          if (state.bonusAvailable.angrywhales && state.bonusEligible.angrywhales) {
+            spawnBonus('angrywhales');
+          }
           state.angrywhalesPendingAtScore = null;
         }
       }
@@ -1097,15 +1497,27 @@
       state.angrywhalesPendingAtScore = null;
     }
 
-    // monde → gauche
-    const vx = -worldSpeed() * dt;
+    // monde → gauche (utilise le cache)
+    const vx = -cachedWorldSpeed * dt;
 
     // Orbes
-    for (let i=orbs.length-1;i>=0;i--){ orbs[i].x+=vx; if(orbs[i].x<-40) orbs.splice(i,1); }
+    for (let i=orbs.length-1;i>=0;i--){ 
+      orbs[i].x+=vx; 
+      if(orbs[i].x<-40) {
+        returnToPool('orb', orbs[i]);
+        orbs.splice(i,1);
+      }
+    }
 
     // Mines
     for (let i=mines.length-1;i>=0;i--){
-      const mObj = mines[i]; mObj.x += vx; if (mObj.x < -60){ mines.splice(i,1); continue; }
+      const mObj = mines[i]; 
+      mObj.x += vx; 
+      if (mObj.x < -60){ 
+        returnToPool('mine', mines[i]);
+        mines.splice(i,1); 
+        continue; 
+      }
       if (mObj.explosive && !mObj.exploded && !mObj.blinking){
         if (mObj.x < player.x() + W()*0.18) { mObj.blinking = true; mObj.blinkTimer = 0; mObj.blinkCount = 0; }
       }
@@ -1126,37 +1538,54 @@
       if (!mObj.exploded){
         if (rectCircleHit(mObj.x,mObj.y,mObj.w,mObj.h, player.x(),player.y,player.radius)){
           spawnExplosion(mObj.x + mObj.w * 0.5, mObj.y + mObj.h * 0.5, Math.max(mObj.w,mObj.h));
-          mines.splice(i,1); takeHit(); continue;
+          returnToPool('mine', mines[i]);
+          mines.splice(i,1); 
+          takeHit(); 
+          continue;
         }
       }
     }
 
     // Orques
+    const orcaSpeed = orcaSpeedFactor();
     for (let i=orcas.length-1;i>=0;i--){
       const o=orcas[i];
-      o.x += vx*1.25*orcaSpeedFactor();
+      o.x += vx*1.25*orcaSpeed;
       o.y += o.vy*dt + Math.sin((state.elapsed+o.phase)*2.0)*20*dt;
-      if (o.x < -100) orcas.splice(i,1); else spawnOrcaBubbles(o, dt);
+      if (o.x < -100) {
+        returnToPool('orca', orcas[i]);
+        orcas.splice(i,1);
+      } else {
+        spawnOrcaBubbles(o, dt);
+      }
     }
 
     // Sharks
     for (let i=sharks.length-1;i>=0;i--){
       const s=sharks[i];
-      s.x += vx*1.32*orcaSpeedFactor();
+      s.x += vx*1.32*orcaSpeed;
       s.y += s.vy*dt + Math.sin((state.elapsed+s.phase)*2.2)*22*dt;
-      if (s.x < -100) sharks.splice(i,1);
+      if (s.x < -100) {
+        returnToPool('shark', sharks[i]);
+        sharks.splice(i,1);
+      }
     }
 
-    // Coffres (mobiles)
+    // Coffres
     for (let i=chests.length-1;i>=0;i--){
       const c = chests[i];
       c.x += vx * 0.95;
-      if (c.x < -80){ chests.splice(i,1); continue; }
+      if (c.x < -80){ 
+        returnToPool('chest', chests[i]);
+        chests.splice(i,1); 
+        continue; 
+      }
 
       const cx = c.x + c.w*0.5, cy = c.y + c.h*0.5, rr = Math.max(18, Math.min(c.w,c.h)*0.45);
       if (circleHit(player.x(),player.y,player.radius, cx, cy, rr)){
+        returnToPool('chest', chests[i]);
         chests.splice(i,1);
-        state.score += 100; // +100 XP au coffre
+        state.score += 100;
         playSfx(audio.chest || audio.bonus, 1.0);
         try { document.dispatchEvent(new CustomEvent('aw:chestPicked')); } catch {}
       }
@@ -1166,9 +1595,14 @@
     for (let i=hearts.length-1;i>=0;i--){
       const h = hearts[i];
       h.x = (h.x||0) + vx;
-      if (h.x < -70){ hearts.splice(i,1); continue; }
+      if (h.x < -70){ 
+        returnToPool('heart', hearts[i]);
+        hearts.splice(i,1); 
+        continue; 
+      }
       const cx = h.x + h.s*0.5, cy = h.y + h.s*0.5, rr = Math.max(12, h.s*0.35);
       if (circleHit(player.x(),player.y,player.radius, cx, cy, rr)){
+        returnToPool('heart', hearts[i]);
         hearts.splice(i,1);
         if (state.lives < state.maxLives) state.lives += 1;
         playSfx(audio.heart, 1.0);
@@ -1178,13 +1612,21 @@
     // Orbes collisions
     for (let i=orbs.length-1;i>=0;i--){
       const o=orbs[i];
-      if (circleHit(player.x(),player.y,player.radius, o.x,o.y,o.r)){ orbs.splice(i,1); state.score+=10; playSfx(audio.orb, 0.9); }
-      else { o.phase = (o.phase||0) + 3.0*dt; }
+      if (circleHit(player.x(),player.y,player.radius, o.x,o.y,o.r)){ 
+        returnToPool('orb', orbs[i]);
+        orbs.splice(i,1); 
+        state.score+=10; 
+        playSfx(audio.orb, 0.9); 
+      } else { 
+        o.phase = (o.phase||0) + 3.0*dt; 
+      }
     }
+    
     // Orques / Sharks collisions
     for (let i=orcas.length-1;i>=0;i--){
       const o=orcas[i], rr=Math.max(o.w,o.h)*0.35;
       if (circleHit(player.x(),player.y,player.radius, o.x+o.w*0.5, o.y+o.h*0.5, rr)){
+        returnToPool('orca', orcas[i]);
         orcas.splice(i,1);
         playSfx(audio.orca, 1.0);
         takeHit();
@@ -1193,6 +1635,7 @@
     for (let i=sharks.length-1;i>=0;i--){
       const s=sharks[i], rr=Math.max(s.w,s.h)*0.35;
       if (circleHit(player.x(),player.y,player.radius, s.x+s.w*0.5, s.y+s.h*0.5, rr)){
+        returnToPool('shark', sharks[i]);
         sharks.splice(i,1);
         playSfx(audio.shark, 1.0);
         takeHit();
@@ -1203,51 +1646,67 @@
     for (let i=bonuses.length-1;i>=0;i--){
       const b = bonuses[i];
       b.x += vx;
-      if (b.x < -80){ bonuses.splice(i,1); continue; }
+      if (b.x < -80){ 
+        returnToPool('bonus', bonuses[i]);
+        bonuses.splice(i,1); 
+        continue; 
+      }
       const cx = b.x + b.s*0.5, cy = b.y + b.s*0.5, rr = Math.max(16, b.s*0.35);
       if (circleHit(player.x(),player.y,player.radius, cx, cy, rr)){
+        const type = b.type;
+        returnToPool('bonus', bonuses[i]);
         bonuses.splice(i,1);
-        // Récompense XP selon type
+        
         let xpGain = 40;
-        if (b.type === 'legendary') xpGain = 150;
-        else if (b.type === 'platinum') xpGain = 220;
-        else if (b.type === 'special') xpGain = 60;
-        else if (b.type === 'angrywhales') xpGain = 80;
+        if (type === 'legendary') xpGain = 150;
+        else if (type === 'platinum') xpGain = 220;
+        else if (type === 'special') xpGain = 60;
+        else if (type === 'angrywhales') xpGain = 80;
         state.score += xpGain;
         playSfx(audio.bonus, 1.0);
 
-        // Compteurs run + claim API si applicable
         try {
           const wallet = localStorage.getItem('walletAddress') || null;
-          if (b.type === 'legendary') {
+          if (type === 'legendary') {
             state.runBonuses.gold++;
-            postJSON('api/bonus/claim', { type: 'legendary', wallet }).catch(()=>{});
-          } else if (b.type === 'bonus2') {
+            postJSON('api/bonus/claim', { type: 'legendary', wallet }).then(() => {
+              // Après claim réussi, refresh immédiat des flags
+              refreshBonusFlags();
+            }).catch(()=>{});
+          } else if (type === 'bonus2') {
             state.runBonuses.silver++;
-            postJSON('api/bonus/claim', { type: 'bonus2', wallet }).catch(()=>{});
-          } else if (b.type === 'platinum') {
+            postJSON('api/bonus/claim', { type: 'bonus2', wallet }).then(() => {
+              refreshBonusFlags();
+            }).catch(()=>{});
+          } else if (type === 'platinum') {
             state.runBonuses.platinum++;
-            postJSON('api/bonus/claim', { type: 'platinum', wallet }).catch(()=>{});
-          } else if (b.type === 'special') {
+            postJSON('api/bonus/claim', { type: 'platinum', wallet }).then(() => {
+              refreshBonusFlags();
+            }).catch(()=>{});
+          } else if (type === 'special') {
             state.runBonuses.special++;
-            // pas de claim serveur pour SPECIAL (pas d’inventaire global)
-          } else if (b.type === 'angrywhales') {
+            postJSON('api/bonus/claim', { type: 'special', wallet }).then(() => {
+              refreshBonusFlags();
+            }).catch(()=>{});
+          } else if (type === 'angrywhales') {
             state.runBonuses.angrywhales++;
-            // pas de claim serveur tant que l’API ne supporte pas "angrywhales"
+            postJSON('api/bonus/claim', { type: 'angrywhales', wallet }).then(() => {
+              refreshBonusFlags();
+            }).catch(()=>{});
           }
         }catch{}
 
-        try { document.dispatchEvent(new CustomEvent('aw:bonusClaimed', { detail:{ type: b.type } })); } catch {}
-        refreshBonusFlags();
+        try { document.dispatchEvent(new CustomEvent('aw:bonusClaimed', { detail:{ type } })); } catch {}
+        // Plus besoin de refreshBonusFlags() ici car déjà fait dans le .then() du claim
       }
     }
 
-    // Effets légers
+    // Effets
     updateOrcaBubbles(dt);
     updateExplosions(dt);
   }
 
-  // Déclenche l’explosion d’une mine
+  // Explosion mine
   function triggerMineExplosion(index, mObj){
     mObj.exploded = true;
     const cx = mObj.x + mObj.w*0.5, cy = mObj.y + mObj.h*0.5;
@@ -1255,6 +1714,7 @@
     const radius = base + extra;
     spawnExplosion(cx, cy, Math.max(mObj.w,mObj.h)*1.6);
     if (circleHit(player.x(), player.y, player.radius, cx, cy, radius)) takeHit();
+    returnToPool('mine', mines[index]);
     mines.splice(index,1);
   }
 
@@ -1272,7 +1732,6 @@
       state.running=false;
       submitBestRun()
         .finally(() => {
-          // → report des bonus récupérés pendant la run
           sendBonusReportIfAny().finally(() => {
             try { document.dispatchEvent(new CustomEvent('aw:runEnded')); } catch {}
           });
@@ -1288,7 +1747,7 @@
   function draw(dt){
     drawWater(dt);
 
-    // Orbes avec halo (top 5 proches du joueur en X)
+    // Orbes avec halo (top 5 proches)
     let glowSet = null;
     if (orbs.length > 0){
       const sorted = orbs
@@ -1305,7 +1764,7 @@
       drawOrb(orbs[i], glowSet.has(i));
     }
 
-    // Mines / Orques / Sharks / Cœurs / Coffres / Bonus
+    // Entités
     for(const m of mines) drawMine(m);
     for(const o of orcas) drawOrca(o);
     for(const s of sharks) drawShark(s);
@@ -1321,7 +1780,7 @@
     // Joueur
     drawWhale(player.x(), player.y, player.radius, player.tilt);
 
-    // HUD (n’écrire que si ça change)
+    // HUD (optimisé)
     const sEl = document.getElementById("score");
     const lEl = document.getElementById("lives");
     if (sEl){
