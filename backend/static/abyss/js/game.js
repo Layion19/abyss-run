@@ -1477,7 +1477,7 @@
       if (!state.silverSpawned && state.bonusAvailable.silver && state.bonusEligible.silver){
         if (!state.silverChecked100 && xp >= 100){
           state.silverChecked100 = true;
-          if (Math.random() < 0.99) {
+          if (Math.random() < 0.15) {
             state.silverPendingAtScore = xp + Math.floor(80 + Math.random()*140);
           }
         }
