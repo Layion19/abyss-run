@@ -1,4 +1,6 @@
 # backend/bonus_api.py
+# VERSION MODIFIÉE : Silver max 2 par wallet (au lieu de 5)
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -9,7 +11,6 @@ import datetime as dt
 import smtplib
 from email.message import EmailMessage
 
-# Import absolu (on lance depuis backend/)
 from db_bonus import (
     init_db, get_or_create_inventory, inventory_remaining, has_stock, decrement_stock,
     get_wallet_counters, increment_wallet_counter, record_claim, reset_season_inventory
@@ -18,16 +19,13 @@ from db_bonus import (
 bonus_router = APIRouter(prefix="/api/bonus", tags=["bonus"])
 
 # ============================================================
-# SAISONS — Reset mensuel chaque 25 du mois (00:00:00 UTC)
+# SAISONS
 # ============================================================
 
-SEASON_RESET_DAY = 25  # reset le 25
+SEASON_RESET_DAY = 25
 
 def current_season_id(now_ts: Optional[int] = None) -> str:
-    """
-    Saison = [25 du mois N, 25 du mois N+1)
-    ID lisible: YYYY-MM (mois du reset de départ)
-    """
+    """Saison = [25 du mois N, 25 du mois N+1)"""
     if now_ts is None:
         now_ts = int(time.time())
     now = dt.datetime.utcfromtimestamp(now_ts).replace(tzinfo=dt.timezone.utc)
@@ -45,19 +43,19 @@ def current_season_id(now_ts: Optional[int] = None) -> str:
     return f"{start_year:04d}-{start_month:02d}"
 
 # ============================================================
-# Config e-mail (env ou valeurs sûres par défaut)
+# Config e-mail
 # ============================================================
 
 EMAIL_ENABLED = os.getenv("EMAIL_ENABLED", "1") not in ("0", "false", "False", "")
 EMAIL_SMTP_HOST = os.getenv("EMAIL_SMTP_HOST", "smtp.gmail.com")
 EMAIL_SMTP_PORT = int(os.getenv("EMAIL_SMTP_PORT", "587"))
 EMAIL_SMTP_USER = os.getenv("EMAIL_SMTP_USER", "angrywhales1@gmail.com")
-EMAIL_SMTP_PASS = os.getenv("EMAIL_SMTP_PASS", "")  # ⚠️ à renseigner: mot de passe d’application Gmail
-EMAIL_FROM      = os.getenv("EMAIL_FROM",      "angrywhales1@gmail.com")
+EMAIL_SMTP_PASS = os.getenv("EMAIL_SMTP_PASS", "nkkmpgtwxdkrqfop")
+EMAIL_FROM      = os.getenv("EMAIL_FROM", "angrywhales1@gmail.com")
 EMAIL_TO_CLAIMS = os.getenv("EMAIL_TO_CLAIMS", "angrywhales1@gmail.com")
 
 def send_email(subject: str, body: str) -> bool:
-    """Envoie un email texte. Retourne True si succès, False sinon (sans casser l’API)."""
+    """Envoie un email texte. Retourne True si succès, False sinon."""
     if not EMAIL_ENABLED:
         return False
     try:
@@ -74,39 +72,38 @@ def send_email(subject: str, body: str) -> bool:
             s.send_message(msg)
         return True
     except Exception:
-        # Ne pas faire échouer la requête si l'email tombe.
         return False
 
 # ============================================================
-# Config quotas + stocks par défaut
+# Config quotas + stocks
 # ============================================================
 
-# Quotas PAR WALLET et PAR SAISON
+# QUOTAS PAR WALLET ET PAR SAISON (MODIFIÉ : Silver = 2)
 MAX_PER_WALLET = {
-    "silver": 5,
+    "silver": 2,        # ← CHANGÉ de 5 à 2
     "gold": 1,
     "platinum": 1,
     "special": 1,
-    "angrywhales": 1,  # ← plus d’underscore
+    "angrywhales": 1,
 }
 
-# Overrides possibles via variables d'env si besoin
+# Stocks par défaut
 PLATINUM_STOCK_DEFAULT = int(os.getenv("PLATINUM_STOCK", "1"))
 SILVER_STOCK_DEFAULT   = int(os.getenv("SILVER_STOCK", "20"))
 GOLD_STOCK_DEFAULT     = int(os.getenv("GOLD_STOCK", "1"))
-SPECIAL_STOCK_DEFAULT  = int(os.getenv("SPECIAL_STOCK", "4"))     # 4 Specials par mois
-AW_STOCK_DEFAULT       = int(os.getenv("AW_STOCK", "5"))           # 5 Angry Whales par mois
+SPECIAL_STOCK_DEFAULT  = int(os.getenv("SPECIAL_STOCK", "4"))
+AW_STOCK_DEFAULT       = int(os.getenv("AW_STOCK", "5"))
 
 DEFAULT_STOCK = {
     "silver": SILVER_STOCK_DEFAULT,
     "gold": GOLD_STOCK_DEFAULT,
     "platinum": PLATINUM_STOCK_DEFAULT,
     "special": SPECIAL_STOCK_DEFAULT,
-    "angrywhales": AW_STOCK_DEFAULT,   # ← plus d’underscore
+    "angrywhales": AW_STOCK_DEFAULT,
 }
 
 # ============================================================
-# Helpers éligibilité (stub à remplacer par ta vraie lecture on-chain)
+# Helpers éligibilité
 # ============================================================
 
 def normalize_wallet(w: Optional[str]) -> str:
@@ -115,14 +112,13 @@ def normalize_wallet(w: Optional[str]) -> str:
     return w.lower().strip()
 
 def holdings_for_wallet(wallet: str) -> int:
-    # TODO: remplacer par la vraie lecture on-chain / indexer
-    return 20  # stub
+    # TODO: remplacer par la vraie lecture on-chain
+    return 20
 
 def can_play(wallet: str) -> bool:
     return holdings_for_wallet(wallet) >= 1
 
 def eligible_for_bonus(wallet: str) -> bool:
-    # Condition globale d'éligibilité bonus (>= 20 NFTs pour l’instant)
     return holdings_for_wallet(wallet) >= 20
 
 def max_per_wallet_reached(wallet: str, bonus_type: str, season_id: str) -> bool:
@@ -133,16 +129,19 @@ def max_per_wallet_reached(wallet: str, bonus_type: str, season_id: str) -> bool
     return (counters.get(bonus_type, 0) or 0) >= limit
 
 # ============================================================
+# Fonction helper pour app.py
+# ============================================================
+
+def get_bonus_counters(wallet: str) -> Dict[str, int]:
+    """Fonction helper pour app.py"""
+    season = current_season_id()
+    return get_wallet_counters(wallet, season)
+
+# ============================================================
 # Schémas
 # ============================================================
 
 class ClaimBody(BaseModel):
-    # Types front:
-    #   - "bonus2"       → silver
-    #   - "legendary"    → gold
-    #   - "platinum"     → platinum
-    #   - "special"      → special
-    #   - "angrywhales"  → angrywhales   (← sans underscore)
     type: str
     wallet: str
     run_id: Optional[str] = None
@@ -194,14 +193,12 @@ async def bonus_eligibility(wallet: str):
     bonus_ok = eligible_for_bonus(w)
 
     inv = inventory_remaining(season, DEFAULT_STOCK)
-    # Restant global
     silver_global       = max(inv.get("silver", 0), 0)
     gold_global         = max(inv.get("gold", 0), 0)
     platinum_global     = max(inv.get("platinum", 0), 0)
     special_global      = max(inv.get("special", 0), 0)
     angrywhales_global  = max(inv.get("angrywhales", 0), 0)
 
-    # Restant côté wallet (quota saison)
     counters = get_wallet_counters(w, season)
     silver_quota_left       = max(0, (MAX_PER_WALLET["silver"]      or 10**9) - (counters.get("silver", 0) or 0))
     gold_quota_left         = max(0, (MAX_PER_WALLET["gold"]        or 10**9) - (counters.get("gold", 0) or 0))
@@ -224,10 +221,10 @@ async def bonus_eligibility(wallet: str):
     return JSONResponse({
         "can_play": play_ok,
         "bonus_eligible": True,
-        "silver_left":       min(silver_global,      silver_quota_left),
-        "gold_left":         min(gold_global,        gold_quota_left),
-        "platinum_left":     min(platinum_global,    platinum_quota_left),
-        "special_left":      min(special_global,     special_quota_left),
+        "silver_left":       min(silver_global, silver_quota_left),
+        "gold_left":         min(gold_global, gold_quota_left),
+        "platinum_left":     min(platinum_global, platinum_quota_left),
+        "special_left":      min(special_global, special_quota_left),
         "angrywhales_left":  min(angrywhales_global, angrywhales_quota_left),
         "season_id": season,
     })
@@ -238,7 +235,7 @@ async def bonus_claim(body: ClaimBody):
     if not w:
         raise HTTPException(status_code=400, detail="missing_or_invalid_wallet")
 
-    # Mapping front → type DB (internal)
+    # Mapping front → type DB
     if body.type == "bonus2":
         bonus_type = "silver"
         label = "SILVER"
@@ -251,7 +248,7 @@ async def bonus_claim(body: ClaimBody):
     elif body.type == "special":
         bonus_type = "special"
         label = "SPECIAL"
-    elif body.type == "angrywhales":  # ← sans underscore
+    elif body.type == "angrywhales":
         bonus_type = "angrywhales"
         label = "ANGRY WHALES"
     else:
@@ -260,23 +257,18 @@ async def bonus_claim(body: ClaimBody):
     season = current_season_id()
     get_or_create_inventory(season, DEFAULT_STOCK)
 
-    # 1) accès jeu
     if not can_play(w):
         raise HTTPException(status_code=403, detail="cannot_play")
 
-    # 2) éligibilité bonus
     if not eligible_for_bonus(w):
         raise HTTPException(status_code=403, detail="not_eligible")
 
-    # 3) quota wallet
     if max_per_wallet_reached(w, bonus_type, season):
         raise HTTPException(status_code=403, detail=f"max_{bonus_type}_reached")
 
-    # 4) stock global
     if not has_stock(season, bonus_type, DEFAULT_STOCK):
         raise HTTPException(status_code=409, detail="out_of_stock")
 
-    # 5) idempotence + décrément + compteur
     new_claim = record_claim(w, season, bonus_type, body.run_id)
     if new_claim:
         ok = decrement_stock(season, bonus_type)
@@ -286,7 +278,7 @@ async def bonus_claim(body: ClaimBody):
 
     counters = get_wallet_counters(w, season)
 
-    # 6) Email de notification (non bloquant si erreur)
+    # Email
     subject = f"[Abyss Run] Claim {label} — {w[:6]}…{w[-4:]} (season {season})"
     lines = [
         f"Season: {season}",
@@ -345,10 +337,7 @@ async def bonus_stats(wallet: str):
 
 @bonus_router.post("/report")
 async def bonus_report(payload: Dict[str, Any]):
-    """
-    Rapport de fin de run (front envoie un résumé). On loggue et on peut envoyer un e-mail récap si besoin.
-    Le payload est permissif (tous les champs optionnels).
-    """
+    """Rapport de fin de run."""
     season = current_season_id()
     w = normalize_wallet(payload.get("wallet"))
     silver = int(payload.get("silver", 0) or 0)

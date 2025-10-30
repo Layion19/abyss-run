@@ -17,23 +17,38 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-# --- Bonus router + (optionnel) lecture des compteurs de bonus
-from bonus_api import bonus_router  # doit exposer les routes /api/bonus/...
+# --- Bonus router
+from bonus_api import bonus_router
+
+# --- Leaderboard DB (NOUVEAU)
+from db_leaderboard import (
+    init_leaderboard_db,
+    submit_player_score,
+    get_leaderboard,
+    get_player_rank,
+    get_player_stats,
+    get_total_players,
+    migrate_from_memory
+)
+
+# --- Bonus counters (optionnel)
 try:
-    # à implémenter côté bonus_api.py : def get_bonus_counters(wallet:str)->dict
     from bonus_api import get_bonus_counters  # type: ignore
 except Exception:
-    def get_bonus_counters(wallet: str) -> Dict[str, int]:  # fallback si non dispo
-        return {"silver": 0, "gold": 0}
+    def get_bonus_counters(wallet: str) -> Dict[str, int]:
+        return {"silver": 0, "gold": 0, "platinum": 0, "special": 0, "angrywhales": 0}
 
 # -------------------------------------------------------------------
 # Config de base
 # -------------------------------------------------------------------
 load_dotenv()
 app = FastAPI(title="Angry Whales – Abyss Run (wallet only)")
-app.include_router(bonus_router)  # garde tes endpoints bonus
+app.include_router(bonus_router)
 
-# CORS (ok en dev, restreins en prod)
+# Initialiser la base de données leaderboard
+init_leaderboard_db()
+
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -67,25 +82,37 @@ def short_addr(a: Optional[str]) -> Optional[str]:
     return (a[:6] + "…" + a[-4:]) if len(a) > 12 else a
 
 class SubmitScoreIn(BaseModel):
-    # NOTE: ici player_id = adresse wallet EVM (cf. game.js)
     player_id: str = Field(..., description="adresse EVM (0x...)")
     score: int = Field(..., ge=0)
     xp: int = Field(..., ge=0)
     level: int = Field(..., ge=1)
 
-# Nouveau modèle pour le report-bonus
 class BonusReportIn(BaseModel):
     wallet: str
     silver: int = 0
     gold: int = 0
+    platinum: int = 0
+    special: int = 0
+    angrywhales: int = 0
+    score: int = 0
+    xp: int = 0
     details: Optional[Dict[str, Any]] = None
 
 # -------------------------------------------------------------------
-# Données en mémoire
+# MIGRATION : Ancien système mémoire → SQLite (À EXÉCUTER UNE FOIS)
 # -------------------------------------------------------------------
-# Liste d’entrées triables (wallet unique par entrée)
-# row = {player_id, display, score, xp, level, at}
-LEADERS: List[Dict] = []
+# Si tu as encore des données en mémoire (LEADERS), décommente cette section
+# et lance le serveur UNE FOIS pour migrer les données, puis re-commente.
+
+# LEADERS: List[Dict] = []  # Anciennes données en mémoire (si existantes)
+# 
+# @app.on_event("startup")
+# def migrate_old_data():
+#     """Migre les anciennes données en mémoire vers SQLite (à exécuter une seule fois)."""
+#     if LEADERS:
+#         count = migrate_from_memory(LEADERS)
+#         logger.info(f"✅ Migrated {count} players from memory to SQLite")
+#         LEADERS.clear()  # Vider la mémoire après migration
 
 # -------------------------------------------------------------------
 # Logging
@@ -95,7 +122,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("abyss")
 
 # -------------------------------------------------------------------
-# SMTP / EMAIL config (lu depuis .env)
+# SMTP / EMAIL config
 # -------------------------------------------------------------------
 SMTP_HOST = os.environ.get("SMTP_HOST", "").strip()
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
@@ -113,31 +140,47 @@ def append_log_line(line: str):
 
 def send_bonus_report_via_smtp(wallet: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Compose et envoie le mail. Retourne un dict de status.
-    Si SMTP n'est pas configuré, écrit dans le log en mode 'simulé'.
+    Compose et envoie le mail avec XP + Bonus.
     """
     timestamp = datetime.utcnow().isoformat()
-    subject = f"[Abyss Run] Bonus report for {short_addr(wallet) or wallet}"
+    subject = f"[Abyss Run] Game Report for {short_addr(wallet) or wallet}"
+    
+    # Récupérer les stats du joueur
+    stats = get_player_stats(wallet)
+    player_xp = stats.get("xp", 0) if stats else 0
+    player_score = stats.get("score", 0) if stats else 0
+    player_level = stats.get("level", 1) if stats else 1
+    
     body = [
         f"Time (UTC): {timestamp}",
         f"Wallet: {wallet}",
-        f"Silver: {payload.get('silver', 0)}",
-        f"Gold:   {payload.get('gold', 0)}",
+        "",
+        "=== PLAYER STATS ===",
+        f"XP:    {player_xp}",
+        f"Score: {player_score}",
+        f"Level: {player_level}",
+        "",
+        "=== BONUSES CLAIMED THIS RUN ===",
+        f"Special:      {payload.get('special', 0)}",
+        f"Silver:       {payload.get('silver', 0)}",
+        f"Gold:         {payload.get('gold', 0)}",
+        f"Platinum:     {payload.get('platinum', 0)}",
+        f"Angry Whales: {payload.get('angrywhales', 0)}",
         "",
         "Details:",
-        json.dumps(payload.get("details", {}), ensure_ascii=False, indent=2)
+        json.dumps(payload.get("details", {}), ensure_ascii=False, indent=2),
+        "",
+        "— Abyss Run notifier"
     ]
     text_body = "\n".join(body)
 
-    log_line = f"[{timestamp}] Bonus report :: Wallet={wallet} :: Silver={payload.get('silver',0)} :: Gold={payload.get('gold',0)} :: details={json.dumps(payload.get('details',{}), ensure_ascii=False)}"
+    log_line = f"[{timestamp}] Report :: Wallet={wallet} :: XP={player_xp} :: Score={player_score} :: Bonuses={json.dumps({k:v for k,v in payload.items() if k in ['silver','gold','platinum','special','angrywhales']})}"
     append_log_line(log_line)
 
-    # Si SMTP non configuré -> on retourne "simulé"
     if not SMTP_HOST or not SMTP_USER or not SMTP_PASS:
         logger.info("SMTP non-configuré, mail simulé. Log line appended.")
         return {"ok": True, "sent": False, "reason": "SMTP not configured, logged only"}
 
-    # Compose email
     try:
         msg = EmailMessage()
         msg["Subject"] = subject
@@ -145,17 +188,16 @@ def send_bonus_report_via_smtp(wallet: str, payload: Dict[str, Any]) -> Dict[str
         msg["To"] = EMAIL_TO
         msg.set_content(text_body)
 
-        # Connexion SMTP (STARTTLS)
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as smtp:
             smtp.ehlo()
             smtp.starttls()
             smtp.ehlo()
             smtp.login(SMTP_USER, SMTP_PASS)
             smtp.send_message(msg)
-        logger.info("Bonus report email sent to %s for wallet %s", EMAIL_TO, wallet)
+        logger.info("Game report email sent to %s for wallet %s", EMAIL_TO, wallet)
         return {"ok": True, "sent": True}
     except Exception as e:
-        logger.exception("Failed to send bonus report email: %s", e)
+        logger.exception("Failed to send game report email: %s", e)
         append_log_line(f"[{timestamp}] EMAIL_SEND_FAILED :: {str(e)}")
         return {"ok": False, "sent": False, "error": str(e)}
 
@@ -164,96 +206,79 @@ def send_bonus_report_via_smtp(wallet: str, payload: Dict[str, Any]) -> Dict[str
 # -------------------------------------------------------------------
 @app.get("/api/health")
 def health():
-    return {"ok": True, "entries": len(LEADERS)}
+    total = get_total_players()
+    return {"ok": True, "total_players": total}
 
 # -------------------------------------------------------------------
-# Scores / Leaderboard
+# Scores / Leaderboard (UTILISE MAINTENANT SQLite)
 # -------------------------------------------------------------------
 @app.post("/api/submit-score")
 def submit_score(p: SubmitScoreIn):
-    # validation simple
+    """Enregistre le score d'un joueur (permanent, jamais reset)."""
     if not is_evm(p.player_id):
         raise HTTPException(400, "player_id doit être une adresse EVM (0x...)")
     if p.score > 1_000_000 or p.xp > 200_000 or p.level > 1_000:
         raise HTTPException(400, "valeurs implausibles")
 
     wallet = p.player_id
-    new_row = {
-        "player_id": wallet,
-        "display": short_addr(wallet) or wallet[:6],
-        "score": int(p.score),
-        "xp": int(p.xp),
-        "level": int(p.level),
-        "at": datetime.utcnow().isoformat()
-    }
-
-    # remplace la meilleure entrée du même wallet si (xp,score) est meilleur
-    idx = next((i for i, row in enumerate(LEADERS) if row["player_id"] == wallet), None)
-    if idx is None:
-        LEADERS.append(new_row)
-    else:
-        old = LEADERS[idx]
-        better = (new_row["xp"], new_row["score"]) > (old["xp"], old["score"])
-        if better:
-            LEADERS[idx] = new_row
-        else:
-            # au moins garder un display propre (peut changer si tu veux afficher autre chose)
-            LEADERS[idx]["display"] = new_row["display"]
-
-    # tri : XP d'abord, puis score
-    LEADERS.sort(key=lambda x: (x["xp"], x["score"]), reverse=True)
-    # limite mémoire
-    if len(LEADERS) > 2000:
-        del LEADERS[2000:]
-
-    return {"ok": True}
+    is_new_record = submit_player_score(wallet, p.xp, p.score, p.level)
+    
+    return {"ok": True, "new_record": is_new_record}
 
 @app.get("/api/leaderboard")
 def leaderboard():
-    # top 50 pour l’affichage
-    return {"top": LEADERS[:50], "count": len(LEADERS)}
+    """Retourne le top 100 joueurs."""
+    top = get_leaderboard(limit=100)
+    return {"top": top, "count": len(top)}
 
 @app.get("/api/rank/{wallet}")
 def api_rank(wallet: str):
-    if not LEADERS:
-        return {"rank": 1}
-    for i, row in enumerate(LEADERS, start=1):
-        if row["player_id"].lower() == wallet.lower():
-            return {"rank": i}
-    return {"rank": len(LEADERS) + 1}
+    """Retourne le rang d'un joueur."""
+    rank = get_player_rank(wallet)
+    return {"rank": rank}
 
 @app.get("/api/my-rank/{wallet}")
 def api_my_rank(wallet: str):
-    """Renvoie rank, meilleur XP/score/level, et compteurs de bonus (si fournis par bonus_api)."""
+    """Renvoie rank, XP/score/level, et compteurs de bonus."""
     if not is_evm(wallet):
         raise HTTPException(400, "wallet invalide")
 
-    # rank
-    rank = len(LEADERS) + 1 if LEADERS else 1
-    best = {"xp": 0, "score": 0, "level": 1}
-    for i, row in enumerate(LEADERS, start=1):
-        if row["player_id"].lower() == wallet.lower():
-            rank = i
-            best = {"xp": row["xp"], "score": row["score"], "level": row["level"]}
-            break
+    rank = get_player_rank(wallet)
+    stats = get_player_stats(wallet)
+    
+    if not stats:
+        # Joueur n'a jamais joué
+        return {
+            "rank": rank,
+            "xp": 0,
+            "score": 0,
+            "level": 1,
+            "bonus": {"silver": 0, "gold": 0, "platinum": 0, "special": 0, "angrywhales": 0},
+            "wallet": wallet,
+            "display": short_addr(wallet),
+        }
 
-    # compteurs de bonus (fallback -> 0/0)
+    # Compteurs de bonus
     counts = {}
     try:
         counts = get_bonus_counters(wallet) or {}
     except Exception:
         counts = {}
-    silver = int(counts.get("silver", 0))
-    gold = int(counts.get("gold", 0))
 
     return {
         "rank": rank,
-        "xp": best["xp"],
-        "score": best["score"],
-        "level": best["level"],
-        "bonus": {"silver": silver, "gold": gold},
+        "xp": stats["xp"],
+        "score": stats["score"],
+        "level": stats["level"],
+        "bonus": {
+            "silver": int(counts.get("silver", 0)),
+            "gold": int(counts.get("gold", 0)),
+            "platinum": int(counts.get("platinum", 0)),
+            "special": int(counts.get("special", 0)),
+            "angrywhales": int(counts.get("angrywhales", 0))
+        },
         "wallet": wallet,
-        "display": short_addr(wallet),
+        "display": stats["display"],
     }
 
 # -------------------------------------------------------------------
@@ -261,11 +286,22 @@ def api_my_rank(wallet: str):
 # -------------------------------------------------------------------
 @app.post("/api/report-bonuses")
 def report_bonuses(payload: BonusReportIn, background: BackgroundTasks):
+    """Envoie un email récapitulatif avec XP + Bonus."""
     wallet = payload.wallet
     if not is_evm(wallet):
         raise HTTPException(400, "wallet invalide")
 
-    data = {"silver": int(payload.silver), "gold": int(payload.gold), "details": payload.details or {}}
+    data = {
+        "silver": int(payload.silver),
+        "gold": int(payload.gold),
+        "platinum": int(payload.platinum),
+        "special": int(payload.special),
+        "angrywhales": int(payload.angrywhales),
+        "score": int(payload.score),
+        "xp": int(payload.xp),
+        "details": payload.details or {}
+    }
+    
     # Envoi en tâche de fond (non-bloquant)
     background.add_task(send_bonus_report_via_smtp, wallet, data)
     return {"ok": True, "queued": True}

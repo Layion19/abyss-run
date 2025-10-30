@@ -1,9 +1,11 @@
-// ================= Angry Whales — Abyss Run (game.js) OPTIMISÉ =====================
-// Optimisations appliquées :
-// 1. Pool d'objets pour éviter allocations/GC
-// 2. Calculs mis en cache (worldSpeed, difficulty)
-// 3. Traitement par batch des entités
-// 4. Réduction des opérations coûteuses dans la boucle
+// ================= Angry Whales — Abyss Run (game.js) FINAL =====================
+// Optimisations + NFT Bonuses + Mines anti-lag
+// 
+// NOUVEAUTÉS :
+// - Bonus de vies selon NFTs : 30(+1), 40(+2), 60(+3), 100(+4)
+// - Bonus chest +20% à 150+ NFTs
+// - Mines explosives : transition fluide Vert→Orange→Rouge (anti-lag)
+// - Tous les bonus (silver, gold, platinum, special, angrywhales) fonctionnels
 // ===================================================================================
 
 (function () {
@@ -23,6 +25,23 @@
   // ---------- Helpers eligibility ----------
   function hasBonusAccess() {
     return !!(window.AW_ACCESS && window.AW_ACCESS.bonusEligible);
+  }
+
+  // ========== NFT BONUSES ==========
+  function getNFTBonuses() {
+    const nftCount = window.AW_ACCESS?.balance || 0;
+    
+    // Bonus de vies
+    let bonusLives = 0;
+    if (nftCount >= 100) bonusLives = 4;
+    else if (nftCount >= 60) bonusLives = 3;
+    else if (nftCount >= 40) bonusLives = 2;
+    else if (nftCount >= 30) bonusLives = 1;
+    
+    // Bonus chest spawn
+    const chestMultiplier = nftCount >= 150 ? 1.2 : 1.0;
+    
+    return { bonusLives, chestMultiplier, nftCount };
   }
 
   // ---------- Canvas ----------
@@ -52,7 +71,6 @@
   }
 
   function returnToPool(type, obj) {
-    // Reset basique
     for (let key in obj) delete obj[key];
     pools[type].push(obj);
   }
@@ -67,7 +85,7 @@
   let cachedWorldSpeed = 0;
   let cachedDifficulty = 0;
   let cacheTimer = 0;
-  const CACHE_INTERVAL = 0.1; // Recalcule tous les 100ms
+  const CACHE_INTERVAL = 0.1;
 
   // ---------- Utils ----------
   function mulberry32(a){return function(){a|=0;a=(a+0x6D2B79F5)|0;let t=Math.imul(a^a>>>15,1|a);t=(t+Math.imul(t^t>>>7,61|t))^t;return((t^t>>>14)>>>0)/4294967296;};}
@@ -87,12 +105,16 @@
     baseSpeed: 240,
     rng: mulberry32(Date.now() & 0xffffffff),
 
+    // NFT bonuses
+    nftBonusLives: 0,
+    chestMultiplier: 1.0,
+
     // timers
     orbTimer: 0.6, mineTimer: 0.9, orcaTimer: 2.8, sharkTimer: 3.6,
     heartTimer: 120.0, nextHeartAt: 120.0,
     gateCooldown: 0,
 
-    // Coffres (mobiles)
+    // Coffres
     chestTimer: 8.0,
     chestSpawnedThisRun: 0,
     chestMaxPerRun: 5,
@@ -123,8 +145,8 @@
     angrywhalesChecked200: false,
     angrywhalesPendingAtScore: null,
 
-    bonusAvailable: { silver: true, gold: true, platinum: true },
-    bonusEligible:  { silver: true, gold: true, platinum: true },
+    bonusAvailable: { silver: true, gold: true, platinum: true, special: true, angrywhales: true },
+    bonusEligible:  { silver: true, gold: true, platinum: true, special: true, angrywhales: true },
     bonusGate: false,
 
     runBonuses: { silver: 0, gold: 0, platinum: 0, special: 0, angrywhales: 0 },
@@ -144,6 +166,12 @@
         if (typeof avail.platinum_remaining === 'number'){
           state.bonusAvailable.platinum = avail.platinum_remaining > 0;
         }
+        if (typeof avail.special_remaining === 'number'){
+          state.bonusAvailable.special = avail.special_remaining > 0;
+        }
+        if (typeof avail.angrywhales_remaining === 'number'){
+          state.bonusAvailable.angrywhales = avail.angrywhales_remaining > 0;
+        }
       }
     }catch{}
     try{
@@ -154,6 +182,8 @@
         if (typeof elig.silver_left === 'number')   state.bonusEligible.silver   = elig.silver_left > 0;
         if (typeof elig.gold_left   === 'number')   state.bonusEligible.gold     = elig.gold_left   > 0;
         if (typeof elig.platinum_left === 'number') state.bonusEligible.platinum = elig.platinum_left > 0;
+        if (typeof elig.special_left === 'number')  state.bonusEligible.special  = elig.special_left > 0;
+        if (typeof elig.angrywhales_left === 'number') state.bonusEligible.angrywhales = elig.angrywhales_left > 0;
       }
     }catch{}
   }
@@ -439,7 +469,6 @@
     }, 300);
   }
 
-  // Système de pré-chargement
   async function preloadAssets() {
     const totalSteps = 100;
     let currentStep = 0;
@@ -449,19 +478,15 @@
       updateLoading(currentStep / totalSteps);
     };
 
-    // Étape 1: Images sprites (30%)
-    const spritePromises = [];
     for (let i = 0; i < 30; i++) {
-      spritePromises.push(new Promise(resolve => {
+      await new Promise(resolve => {
         setTimeout(() => {
           updateProgress();
           resolve();
         }, Math.random() * 20);
-      }));
+      });
     }
-    await Promise.all(spritePromises);
 
-    // Étape 2: Vérification images bonus (20%)
     for (let i = 0; i < 20; i++) {
       await new Promise(resolve => {
         setTimeout(() => {
@@ -471,9 +496,7 @@
       });
     }
 
-    // Étape 3: Initialisation pools d'objets (25%)
     for (let i = 0; i < 25; i++) {
-      // Pré-remplir les pools
       if (i % 5 === 0) {
         for (let j = 0; j < 3; j++) {
           pools.orb.push({});
@@ -490,7 +513,6 @@
       });
     }
 
-    // Étape 4: Génération seed aléatoire (15%)
     for (let i = 0; i < 15; i++) {
       await new Promise(resolve => {
         setTimeout(() => {
@@ -500,7 +522,6 @@
       });
     }
 
-    // Étape 5: Préparation monde (10%)
     for (let i = 0; i < 10; i++) {
       await new Promise(resolve => {
         setTimeout(() => {
@@ -510,7 +531,6 @@
       });
     }
 
-    // Assurer 100%
     updateLoading(1.0);
   }
 
@@ -523,11 +543,31 @@
     }
   });
   
-  btnRestart && btnRestart.addEventListener("click", () => { hideGameOverOverlay(); resetGame(); });
+  btnRestart.addEventListener("click", async () => { 
+  hideGameOverOverlay(); 
+  resetGame();
+  // ✅ Relance immédiatement la partie
+  showLoading();
+  await preloadAssets();
+  hideLoading();
+  startRun();
+});
 
   async function startRun(){
     refreshBonusFlags();
     state.bonusGate = hasBonusAccess();
+
+    // ========== APPLIQUER LES BONUS NFT ==========
+    const nftBonuses = getNFTBonuses();
+    state.nftBonusLives = nftBonuses.bonusLives;
+    state.chestMultiplier = nftBonuses.chestMultiplier;
+    state.lives = 4 + state.nftBonusLives;
+    state.maxLives = 6 + state.nftBonusLives;
+    
+    console.log(`🐋 NFT Bonuses Applied: ${nftBonuses.nftCount} NFTs`);
+    console.log(`   → Starting Lives: ${state.lives} (base 4 + ${state.nftBonusLives} bonus)`);
+    console.log(`   → Max Lives: ${state.maxLives}`);
+    console.log(`   → Chest Multiplier: ${state.chestMultiplier}x`);
 
     state.silverSpawned = false;
     state.silverChecked100 = false;
@@ -564,9 +604,17 @@
 
   function resetGame(){
     try{ audio.bgm.pause(); audio.bgm.currentTime = 0; }catch{}
-    state.running=false; state.score=0; state.lives=4; state.elapsed=0;
+    state.running=false; state.score=0;
     
-    // Retour aux pools
+    // Appliquer les bonus NFT
+    const nftBonuses = getNFTBonuses();
+    state.nftBonusLives = nftBonuses.bonusLives;
+    state.chestMultiplier = nftBonuses.chestMultiplier;
+    state.lives = 4 + state.nftBonusLives;
+    state.maxLives = 6 + state.nftBonusLives;
+    
+    state.elapsed=0;
+    
     while(orbs.length) returnToPool('orb', orbs.pop());
     while(mines.length) returnToPool('mine', mines.pop());
     while(orcas.length) returnToPool('orca', orcas.pop());
@@ -759,7 +807,6 @@
     return 0.18 + t*(0.50-0.18);
   }
 
-  // Répartition mines
   let _lastMineY = null;
   function pickMineY(){
     const edgeBias = 0.35;
@@ -800,10 +847,13 @@
     m.w = s; 
     m.h = s;
     m.explosive = state.rng() < explosiveChance();
-    m.blinking = false; 
-    m.blinkCount = 0; 
-    m.blinkTimer = 0; 
+    
+    // ========== NOUVEAU : Progression au lieu de blink ==========
+    m.exploding = false;
+    m.explodeProgress = 0.0;  // 0.0 = vert, 1.0 = explosion
+    m.explodeStartTime = 0;
     m.exploded = false;
+    
     mines.push(m);
   }
 
@@ -832,9 +882,9 @@
       m.w = s;
       m.h = s;
       m.explosive = explosive;
-      m.blinking = false;
-      m.blinkCount = 0;
-      m.blinkTimer = 0;
+      m.exploding = false;
+      m.explodeProgress = 0.0;
+      m.explodeStartTime = 0;
       m.exploded = false;
       mines.push(m);
     }
@@ -880,13 +930,11 @@
     Object.entries(bonusImgs).forEach(([name, url]) => preloadImg(name, url));
   })();
 
-  // ---------- BONUS draw ----------
   function drawBonus(b){
     const t = state.elapsed;
     const bob = Math.sin(t * 2 + (b.y * 0.05)) * 4;
     const x = b.x, y = b.y + bob, s = b.s;
 
-    // halo léger
     ctx.save();
     ctx.globalCompositeOperation = "screen";
     const g = ctx.createRadialGradient(x + s*0.5, y + s*0.5, 0, x + s*0.5, y + s*0.5, s*0.9);
@@ -900,7 +948,6 @@
     ctx.beginPath(); ctx.arc(x + s*0.5, y + s*0.5, s*0.9, 0, Math.PI*2); ctx.fill();
     ctx.restore();
 
-    // sprite
     const img = loadedImgs[b.type];
     if (img && img.complete) {
       ctx.drawImage(img, x, y, s, s);
@@ -920,9 +967,8 @@
     }
   }
 
-  // ---------- BONUS spawn ----------
   function spawnBonus(type){
-    const s = 44 * (W()/820);
+    const s = 46 * (W()/820);
     const y = rand(70, H()-70);
     const b = getFromPool('bonus');
     b.type = type;
@@ -1178,7 +1224,6 @@
     else { ctx.fillStyle="#c59f3c"; ctx.fillRect(c.x, c.y, c.w, c.h); }
   }
 
-  // Orbes optimisés
   function drawOrb(o, allowGlow){
     const pulse = 0.7 + 0.3*Math.sin(o.phase||0);
     if (allowGlow){
@@ -1197,7 +1242,9 @@
     }
   }
 
+  // ========== NOUVEAU : Draw Mine avec transition de couleur ==========
   function drawMine(m){
+    // Sprite mine
     if (sprites.mine.ready){ 
       const s=Math.max(m.w,m.h)*1.35; 
       ctx.drawImage(sprites.mine.img, m.x+(m.w-s)/2, m.y+(m.h-s)/2, s, s); 
@@ -1207,21 +1254,53 @@
       const g=ctx.createRadialGradient(-r*.4,-r*.4,r*.2,0,0,r); g.addColorStop(0,"#ffb17a"); g.addColorStop(1,"#ff5c2e");
       ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.fill(); ctx.restore();
     }
+    
     const cx = m.x + m.w*0.5, cy = m.y + m.h*0.5;
-    let color = "rgba(50,255,120,0.95)"; let radius = Math.max(2.5, Math.min(m.w,m.h)*0.10);
-    if (m.explosive){ 
-      color = "rgba(255,180,60,0.95)"; 
-      if (m.blinking){ 
-        const blink = (Math.sin(state.elapsed*12) > 0) ? 1 : 0.35; 
-        color = `rgba(255,60,60,${0.85*blink})`; 
-        radius *= 1.15; 
-      } 
+    let color = "rgba(50,255,120,0.95)"; // Vert par défaut
+    let radius = Math.max(2.5, Math.min(m.w,m.h)*0.10);
+    
+    if (m.explosive && m.exploding){ 
+      const progress = m.explodeProgress;
+      
+      // Transition de couleur fluide : Vert → Orange → Rouge
+      if (progress < 0.33) {
+        // Phase 1 : Vert → Orange (0.0 → 0.33)
+        const t = progress / 0.33;
+        const r = Math.floor(50 + (255-50)*t);
+        const g = 255;
+        const b = Math.floor(120 + (60-120)*t);
+        color = `rgba(${r},${g},${b},0.95)`;
+      } else if (progress < 0.66) {
+        // Phase 2 : Orange → Rouge (0.33 → 0.66)
+        const t = (progress - 0.33) / 0.33;
+        const r = 255;
+        const g = Math.floor(180 - (180-60)*t);
+        const b = 60;
+        color = `rgba(${r},${g},${b},0.95)`;
+      } else {
+        // Phase 3 : Rouge intense (0.66 → 1.0)
+        color = `rgba(255,60,60,0.95)`;
+      }
+      
+      radius *= 1.15; 
     }
+    
+    // Glow
     ctx.save(); ctx.globalCompositeOperation = "screen";
     const glow = ctx.createRadialGradient(cx,cy,0,cx,cy,radius*3.2);
-    glow.addColorStop(0, color.replace("0.95","0.85")); glow.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(cx,cy,radius*2.4,0,Math.PI*2); ctx.fill(); ctx.restore();
-    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.fill();
+    glow.addColorStop(0, color.replace("0.95","0.85")); 
+    glow.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = glow; 
+    ctx.beginPath(); 
+    ctx.arc(cx,cy,radius*2.4,0,Math.PI*2); 
+    ctx.fill(); 
+    ctx.restore();
+    
+    // Centre
+    ctx.fillStyle = color; 
+    ctx.beginPath(); 
+    ctx.arc(cx,cy,radius,0,Math.PI*2); 
+    ctx.fill();
   }
   
   function drawHeart(h){
@@ -1270,13 +1349,16 @@
     return 0.6;
   }
 
-  // ---------- Coffres (mobiles) ----------
+  // ---------- Coffres (avec multiplicateur NFT) ----------
   function chestChance(xp){
-    if (xp >= 1000 && xp <= 2000) return 0.60;
-    if (xp >= 500  && xp < 1000)  return 0.30;
-    if (xp >= 100  && xp < 500)   return 0.20;
-    if (xp >= 0    && xp < 150)   return 0.05;
-    return 0.00;
+    let baseChance = 0;
+    if (xp >= 1000 && xp <= 2000) baseChance = 0.60;
+    else if (xp >= 500  && xp < 1000)  baseChance = 0.30;
+    else if (xp >= 100  && xp < 500)   baseChance = 0.20;
+    else if (xp >= 0    && xp < 150)   baseChance = 0.05;
+    
+    // ========== APPLIQUER LE BONUS NFT 150+ ==========
+    return baseChance * state.chestMultiplier;
   }
   
   function spawnChest(){
@@ -1310,7 +1392,6 @@
     state.elapsed += dt;
     if (state.gateCooldown > 0) state.gateCooldown -= dt;
 
-    // CACHE : recalcul périodique des valeurs coûteuses
     cacheTimer += dt;
     if (cacheTimer >= CACHE_INTERVAL) {
       cacheTimer = 0;
@@ -1318,7 +1399,6 @@
       cachedWorldSpeed = worldSpeed();
     }
 
-    // mouvements joueur
     const kUp   = keys.has("arrowup")   || keys.has("w");
     const kDown = keys.has("arrowdown") || keys.has("s");
     const tUp = mobUp, tDown = mobDown;
@@ -1338,16 +1418,13 @@
     }
     player.y  += player.vy * dt;
 
-    // limites verticales
     const m = 26 * (H()/492);
     if (player.y > H()-m){ player.y=H()-m; player.vy=0; }
     if (player.y < m){     player.y=m;     player.vy=0; }
     player.tilt = clamp(player.vy * 0.0025, -0.35, 0.35);
 
-    // bulles
     spawnBubbles(dt); updateBubbles(dt);
 
-    // timers (difficulté) - utilise le cache
     const d = cachedDifficulty;
     const spawnScale = 1.25 + Math.min(1.65, (state.elapsed/65) + (state.score/1100) + d*0.7);
     state.orbTimer   -= dt; state.mineTimer  -= dt; state.orcaTimer  -= dt; state.heartTimer -= dt;
@@ -1380,7 +1457,6 @@
       if (state.rng() < 0.5) spawnHeart(); state.nextHeartAt += 120; state.heartTimer = 5;
     }
 
-    // Coffres
     state.chestTimer -= dt;
     if (state.chestTimer <= 0){
       const xp = state.score|0;
@@ -1395,14 +1471,13 @@
 
     // ----- BONUS (tirages aux paliers de score) -----
     const xp = state.score|0;
-    const canSpawnBonuses = state.bonusGate === true; // verrou local (≥20 NFTs)
+    const canSpawnBonuses = state.bonusGate === true;
 
     if (canSpawnBonuses) {
-      // SILVER : 100 → 15% ; 600 → 45% (si stock global ET quota wallet disponibles)
       if (!state.silverSpawned && state.bonusAvailable.silver && state.bonusEligible.silver){
         if (!state.silverChecked100 && xp >= 100){
           state.silverChecked100 = true;
-          if (Math.random() < 0.15) {
+          if (Math.random() < 0.99) {
             state.silverPendingAtScore = xp + Math.floor(80 + Math.random()*140);
           }
         }
@@ -1414,14 +1489,12 @@
         }
       }
       if (!state.silverSpawned && state.silverPendingAtScore != null && xp >= state.silverPendingAtScore){
-        // Double-check avant spawn (au cas où stock épuisé entre-temps)
         if (state.bonusAvailable.silver && state.bonusEligible.silver) {
-          spawnBonus('bonus2'); // SILVER
+          spawnBonus('bonus2');
         }
         state.silverPendingAtScore = null;
       }
 
-      // GOLD : 1000 → 8% ; 1500 → 15% (si stock global ET quota wallet disponibles)
       if (!state.goldSpawned && state.bonusAvailable.gold && state.bonusEligible.gold){
         if (!state.goldChecked1000 && xp >= 1000){
           state.goldChecked1000 = true;
@@ -1438,12 +1511,11 @@
       }
       if (!state.goldSpawned && state.goldPendingAtScore != null && xp >= state.goldPendingAtScore){
         if (state.bonusAvailable.gold && state.bonusEligible.gold) {
-          spawnBonus('legendary'); // GOLD
+          spawnBonus('legendary');
         }
         state.goldPendingAtScore = null;
       }
 
-      // PLATINUM : 1800 → 4% ; 2500 → 8% (si stock global ET quota wallet disponibles)
       if (!state.platinumSpawned && state.bonusAvailable.platinum && state.bonusEligible.platinum){
         if (!state.platinumChecked1800 && xp >= 1800){
           state.platinumChecked1800 = true;
@@ -1460,12 +1532,11 @@
       }
       if (!state.platinumSpawned && state.platinumPendingAtScore != null && xp >= state.platinumPendingAtScore){
         if (state.bonusAvailable.platinum && state.bonusEligible.platinum) {
-          spawnBonus('platinum'); // PLATINUM
+          spawnBonus('platinum');
         }
         state.platinumPendingAtScore = null;
       }
 
-      // SPECIAL : 5% 1×/run, apparition différée 300–900 XP (si stock ET quota OK)
       if (!state.specialSpawned && state.specialWillSpawnThisRun && state.specialPendingAtScore != null && xp >= state.specialPendingAtScore){
         if (state.bonusAvailable.special && state.bonusEligible.special) {
           spawnBonus('special');
@@ -1473,7 +1544,6 @@
         state.specialPendingAtScore = null;
       }
 
-      // ANGRY WHALES (saisonnier, front-only claim mais respect stock) : dès 200 XP → 10%
       if (!state.angrywhalesSpawned && state.bonusAvailable.angrywhales && state.bonusEligible.angrywhales){
         if (!state.angrywhalesChecked200 && xp >= 200){
           state.angrywhalesChecked200 = true;
@@ -1489,7 +1559,6 @@
         }
       }
     } else {
-      // Si pas éligible aux bonus, on purge tout pending pour éviter un spawn tardif
       state.silverPendingAtScore = null;
       state.goldPendingAtScore = null;
       state.platinumPendingAtScore = null;
@@ -1497,10 +1566,8 @@
       state.angrywhalesPendingAtScore = null;
     }
 
-    // monde → gauche (utilise le cache)
     const vx = -cachedWorldSpeed * dt;
 
-    // Orbes
     for (let i=orbs.length-1;i>=0;i--){ 
       orbs[i].x+=vx; 
       if(orbs[i].x<-40) {
@@ -1509,7 +1576,9 @@
       }
     }
 
-    // Mines
+    // ========== MINES : Progression explosive ==========
+    const EXPLODE_DURATION = 0.75; // 0.75 sec pour la transition complète
+    
     for (let i=mines.length-1;i>=0;i--){
       const mObj = mines[i]; 
       mObj.x += vx; 
@@ -1518,23 +1587,29 @@
         mines.splice(i,1); 
         continue; 
       }
-      if (mObj.explosive && !mObj.exploded && !mObj.blinking){
-        if (mObj.x < player.x() + W()*0.18) { mObj.blinking = true; mObj.blinkTimer = 0; mObj.blinkCount = 0; }
-      }
-      if (mObj.blinking && !mObj.exploded){
-        mObj.blinkTimer += dt;
-        if (mObj.blinkTimer >= 0.25){
-          mObj.blinkTimer = 0; mObj.blinkCount++;
-          if (mObj.blinkCount >= 3){
-            const nearX = mObj.x < player.x() + W()*0.02;
-            const nearY = Math.abs((mObj.y + mObj.h*0.5) - player.y) <= 120;
-            if (nearX && nearY){ triggerMineExplosion(i, mObj); continue; }
-          }
+      
+      // Déclencher le début de l'explosion
+      if (mObj.explosive && !mObj.exploding && !mObj.exploded){
+        if (mObj.x < player.x() + W()*0.25) { 
+          mObj.exploding = true; 
+          mObj.explodeStartTime = state.elapsed;
+          mObj.explodeProgress = 0.0;
         }
       }
-      if (mObj.explosive && !mObj.exploded && mObj.blinkCount >= 3 && mObj.x < player.x() - W()*0.08){
-        triggerMineExplosion(i, mObj); continue;
+      
+      // Progression de l'explosion
+      if (mObj.exploding && !mObj.exploded){
+        const elapsed = state.elapsed - mObj.explodeStartTime;
+        mObj.explodeProgress = Math.min(elapsed / EXPLODE_DURATION, 1.0);
+        
+        // À 100% → BOOM
+        if (mObj.explodeProgress >= 1.0){
+          triggerMineExplosion(i, mObj); 
+          continue;
+        }
       }
+      
+      // Collision normale
       if (!mObj.exploded){
         if (rectCircleHit(mObj.x,mObj.y,mObj.w,mObj.h, player.x(),player.y,player.radius)){
           spawnExplosion(mObj.x + mObj.w * 0.5, mObj.y + mObj.h * 0.5, Math.max(mObj.w,mObj.h));
@@ -1546,7 +1621,6 @@
       }
     }
 
-    // Orques
     const orcaSpeed = orcaSpeedFactor();
     for (let i=orcas.length-1;i>=0;i--){
       const o=orcas[i];
@@ -1560,7 +1634,6 @@
       }
     }
 
-    // Sharks
     for (let i=sharks.length-1;i>=0;i--){
       const s=sharks[i];
       s.x += vx*1.32*orcaSpeed;
@@ -1571,7 +1644,6 @@
       }
     }
 
-    // Coffres
     for (let i=chests.length-1;i>=0;i--){
       const c = chests[i];
       c.x += vx * 0.95;
@@ -1591,7 +1663,6 @@
       }
     }
 
-    // Cœurs
     for (let i=hearts.length-1;i>=0;i--){
       const h = hearts[i];
       h.x = (h.x||0) + vx;
@@ -1609,7 +1680,6 @@
       }
     }
 
-    // Orbes collisions
     for (let i=orbs.length-1;i>=0;i--){
       const o=orbs[i];
       if (circleHit(player.x(),player.y,player.radius, o.x,o.y,o.r)){ 
@@ -1622,7 +1692,6 @@
       }
     }
     
-    // Orques / Sharks collisions
     for (let i=orcas.length-1;i>=0;i--){
       const o=orcas[i], rr=Math.max(o.w,o.h)*0.35;
       if (circleHit(player.x(),player.y,player.radius, o.x+o.w*0.5, o.y+o.h*0.5, rr)){
@@ -1642,7 +1711,6 @@
       }
     }
 
-    // BONUS déplacement + collision
     for (let i=bonuses.length-1;i>=0;i--){
       const b = bonuses[i];
       b.x += vx;
@@ -1670,7 +1738,6 @@
           if (type === 'legendary') {
             state.runBonuses.gold++;
             postJSON('api/bonus/claim', { type: 'legendary', wallet }).then(() => {
-              // Après claim réussi, refresh immédiat des flags
               refreshBonusFlags();
             }).catch(()=>{});
           } else if (type === 'bonus2') {
@@ -1697,16 +1764,13 @@
         }catch{}
 
         try { document.dispatchEvent(new CustomEvent('aw:bonusClaimed', { detail:{ type } })); } catch {}
-        // Plus besoin de refreshBonusFlags() ici car déjà fait dans le .then() du claim
       }
     }
 
-    // Effets
     updateOrcaBubbles(dt);
     updateExplosions(dt);
   }
 
-  // Explosion mine
   function triggerMineExplosion(index, mObj){
     mObj.exploded = true;
     const cx = mObj.x + mObj.w*0.5, cy = mObj.y + mObj.h*0.5;
@@ -1747,7 +1811,6 @@
   function draw(dt){
     drawWater(dt);
 
-    // Orbes avec halo (top 5 proches)
     let glowSet = null;
     if (orbs.length > 0){
       const sorted = orbs
@@ -1759,12 +1822,10 @@
       glowSet = new Set();
     }
 
-    // Orbes
     for (let i=0;i<orbs.length;i++){
       drawOrb(orbs[i], glowSet.has(i));
     }
 
-    // Entités
     for(const m of mines) drawMine(m);
     for(const o of orcas) drawOrca(o);
     for(const s of sharks) drawShark(s);
@@ -1772,15 +1833,12 @@
     for(const c of chests) drawChest(c);
     for(const b of bonuses) drawBonus(b);
 
-    // Effets
     drawOrcaBubbles();
     drawExplosions();
     drawBubbles();
 
-    // Joueur
     drawWhale(player.x(), player.y, player.radius, player.tilt);
 
-    // HUD (optimisé)
     const sEl = document.getElementById("score");
     const lEl = document.getElementById("lives");
     if (sEl){

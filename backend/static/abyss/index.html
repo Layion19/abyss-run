@@ -51,20 +51,58 @@
     .rank-badge{ background:#0e1b35; border:1px solid #223a67; color:#cfe6ff; padding:6px 10px; border-radius:999px; font-size:14px; cursor:pointer; }
     .actions{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 
-    .rank-summary{ display:inline-block; margin-top:6px; }
-
-    /* ===== Leaderboard rows ===== */
+    /* ===== Leaderboard avec BULLE ===== */
     .leaders{ list-style:none; margin:10px 0 0; padding:0; }
     .leaders li{
-      display:flex; align-items:center; justify-content:space-between;
-      gap:10px; padding:8px 0; border-bottom:1px solid rgba(255,255,255,.06);
-      font-size:15px;
+      display:flex; 
+      align-items:center; 
+      gap:10px; 
+      padding:8px 10px; 
+      border-bottom:1px solid rgba(255,255,255,.06);
+      font-size:13px;
     }
-    .leaders .left{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .leaders .right{ margin-left:12px; white-space:nowrap; }
-    .leaders .wallet{ color:#6dd5ff; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; cursor:pointer; }
-    .leaders .wallet:hover{ text-decoration:underline; }
-    .leaders li.me .left b{ color:var(--brand-yellow); }
+    .leaders .rank-wallet{ 
+      display:flex; 
+      align-items:center; 
+      gap:6px; 
+      white-space:nowrap; 
+      flex-shrink:0;
+    }
+    .leaders .wallet-yellow{ 
+      color:#ffcc00; 
+      font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; 
+      font-weight:600;
+      font-size:13px;
+    }
+    .leaders .info-bubble{ 
+      background:#0e1b35; 
+      border:1px solid #223a67; 
+      border-radius:999px; 
+      padding:6px 12px;
+      display:flex; 
+      align-items:center; 
+      gap:6px; 
+      flex:1; 
+      min-width:0;
+      font-size:12px;
+    }
+    .leaders .info-bubble .sep{ opacity:0.5; }
+    .leaders .bonuses{ 
+      display:flex; 
+      gap:4px; 
+      align-items:center; 
+    }
+    .leaders .wallet-copy{ 
+      color:#6dd5ff; 
+      font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; 
+      cursor:pointer; 
+      font-size:12px;
+      white-space:nowrap;
+      flex-shrink:0;
+      margin-left:auto;
+    }
+    .leaders .wallet-copy:hover{ text-decoration:underline; }
+    .leaders li.me{ background:rgba(255,204,0,0.08); border-radius:6px; }
 
     .start-screen{ position:absolute; inset:0; z-index:50; pointer-events:auto; background:#000; }
     #start-bg{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block; z-index:0; }
@@ -98,6 +136,10 @@
       .wrap{ padding:12px; }
       .title .angry{ font-size:2.4rem; }
       .title .abyss{ font-size:1.1rem; }
+      .leaders li{ font-size:11px; gap:6px; padding:6px 8px; }
+      .leaders .info-bubble{ font-size:10px; gap:4px; padding:4px 8px; }
+      .leaders .wallet-yellow{ font-size:12px; }
+      .leaders .wallet-copy{ font-size:11px; }
     }
 
     /* =================== Bonuses strip =================== */
@@ -115,12 +157,7 @@
       display:flex; align-items:center; justify-content:space-between; gap:12px;
     }
     .bonus-left{ display:flex; align-items:center; gap:8px; }
-    .dot{ width:10px; height:10px; border-radius:50%; background:#bcd4ff; display:inline-block; }
-    .dot.gold{ background:#ffd24d; }
-    .dot.platinum{ background:#b0b0ff; }
-    .dot.special{ background:#9cff84; }   /* Specials */
-    .dot.diamond{ background:#6df7ff; }   /* Diamonds */
-    .dot.aw{ background:#85b6ff; }        /* Angry Whales */
+    .bonus-emoji{ font-size:18px; }
     .bonus-name{ font-weight:700; }
     .bonus-right{ text-align:right; }
     .bonus-count{ font-weight:800; display:block; }
@@ -152,7 +189,7 @@
         <div id="start-screen" class="start-screen">
           <img id="start-bg" src="static/abyss/img/start-screen.png" alt="">
           <div class="start-ui">
-            <p class="start-hints">P = Play • SPACE = Jump • SHIFT = Boost • ↑/↓ = Move • R = Restart</p>
+            <p class="start-hints">• SHIFT = Boost • ↑/↓ = Move • </p>
             <button id="start-btn">▶ Play</button>
           </div>
         </div>
@@ -196,10 +233,10 @@
     <section class="bonus-strip" aria-live="polite">
       <h3>🎯 Active Bonuses</h3>
       <div class="bonus-list">
-        <!-- Specials (à gauche de Silver) -->
+        <!-- Specials -->
         <div class="bonus-item">
           <div class="bonus-left">
-            <span class="dot special"></span>
+            <span class="bonus-emoji">🟢</span>
             <span class="bonus-name">Specials</span>
           </div>
           <div class="bonus-right">
@@ -211,7 +248,7 @@
         <!-- Silver -->
         <div class="bonus-item">
           <div class="bonus-left">
-            <span class="dot"></span>
+            <span class="bonus-emoji">🥈</span>
             <span class="bonus-name">Silver</span>
           </div>
           <div class="bonus-right">
@@ -223,7 +260,7 @@
         <!-- Gold -->
         <div class="bonus-item">
           <div class="bonus-left">
-            <span class="dot gold"></span>
+            <span class="bonus-emoji">🥇</span>
             <span class="bonus-name">Gold</span>
           </div>
           <div class="bonus-right">
@@ -232,10 +269,10 @@
           </div>
         </div>
 
-        <!-- Platinum (Gamblor Deck) -->
+        <!-- Platinum -->
         <div class="bonus-item">
           <div class="bonus-left">
-            <span class="dot platinum"></span>
+            <span class="bonus-emoji">💠</span>
             <span class="bonus-name">Platinum</span>
           </div>
           <div class="bonus-right">
@@ -244,10 +281,10 @@
           </div>
         </div>
 
-        <!-- Diamonds (à droite de Platinum) -->
+        <!-- Diamonds -->
         <div class="bonus-item">
           <div class="bonus-left">
-            <span class="dot diamond"></span>
+            <span class="bonus-emoji">💎</span>
             <span class="bonus-name">Diamonds</span>
           </div>
           <div class="bonus-right">
@@ -259,7 +296,7 @@
         <!-- Angry Whales -->
         <div class="bonus-item">
           <div class="bonus-left">
-            <span class="dot aw"></span>
+            <span class="bonus-emoji">🔴</span>
             <span class="bonus-name">Angry Whales</span>
           </div>
           <div class="bonus-right">
@@ -282,9 +319,6 @@
         </div>
       </div>
 
-      <!-- Sous-barre avec Rank / XP / Bonus -->
-      <div class="pill rank-summary" id="rankSummary">Rank: — · XP: — · Bonus: 🥇 0 · 🥈 0</div>
-
       <ol id="leaders" class="leaders"><li>No entries yet.</li></ol>
       <p class="hint">Sorted by XP first, then score. Auto-refresh (5 min).</p>
 
@@ -292,12 +326,9 @@
     </section>
   </div>
 
-  <!-- Wallet gate (avant le jeu) -->
-  <!-- SDK MetaMask (QR mobile + compatibilité mobile/desktop) -->
+  <!-- Wallet gate -->
   <script src="https://unpkg.com/@metamask/sdk/dist/browser/es/metamask-sdk.js"></script>
-  <!-- Script principal du wallet -->
   <script type="module" src="static/abyss/js/wallet.js"></script>
-  <!-- Game -->
   <script src="static/abyss/js/game.js"></script>
 
   <!-- Canvas sizing -->
@@ -330,12 +361,10 @@
 
   <!-- UI + backend wiring -->
   <script>
-    // ---------- Helpers ----------
     const qs = id => document.getElementById(id);
     const leadersOl  = qs('leaders');
     const rankBadge  = qs('rankBadge');
     const rankBtn    = qs('showRankBtn');
-    const rankSummary= qs('rankSummary');
 
     function wallet(){ return localStorage.getItem('walletAddress') || null; }
     async function safeJson(url){
@@ -344,7 +373,6 @@
       try{ return await r.json(); }catch{ return null; }
     }
 
-    /* ===== [BLOC 1] GATE HELPERS ===== */
     function gateOk() { return !!(window.AW_ACCESS && window.AW_ACCESS.canPlay === true); }
     function requireGate(msg) {
       if (gateOk()) return true;
@@ -352,17 +380,17 @@
       return false;
     }
 
-    // ---------- Bonuses strip refresh ----------
+    // Bonus strip refresh
     async function refreshBonusPanel(){
-      const d = await safeJson('api/bonus/remaining'); // {silver, gold, platinum, ...}
+      const d = await safeJson('api/bonus/remaining');
       if (!d) return;
-      const s = qs('silverCount');   if (s && d.silver   != null) s.textContent   = d.silver;
-      const g = qs('goldCount');     if (g && d.gold     != null) g.textContent   = d.gold;
-      const p = qs('platinumCount'); if (p && d.platinum != null) p.textContent   = d.platinum;
-      // Specials (4), Diamonds (—), Angry Whales (5) restent statiques côté UI pour l’instant.
+      const s = qs('silverCount');     if (s && d.silver   != null) s.textContent = d.silver;
+      const g = qs('goldCount');       if (g && d.gold     != null) g.textContent = d.gold;
+      const p = qs('platinumCount');   if (p && d.platinum != null) p.textContent = d.platinum;
+      const sp = qs('specialsCount');  if (sp && d.special != null) sp.textContent = d.special;
+      const aw = qs('angryWhalesCount'); if (aw && d.angrywhales != null) aw.textContent = d.angrywhales;
     }
 
-    // ---------- Fallback si pas d'API "remaining" ----------
     document.addEventListener('aw:bonusClaimed', (e) => {
       const t = e?.detail?.type;
       const dec = (id) => {
@@ -371,21 +399,19 @@
         const n = parseInt(el.textContent||'0', 10);
         if (!isNaN(n)) el.textContent = Math.max(0, n - 1);
       };
-      if (t === 'bonus2')        dec('silverCount');      // Silver
-      else if (t === 'legendary')dec('goldCount');        // Gold
-      else if (t === 'platinum') dec('platinumCount');    // Platinum
-      else if (t === 'special')  dec('specialsCount');    // Specials (si tu l’actives depuis le jeu)
-      else if (t === 'angrywhales') dec('angryWhalesCount'); // Angry Whales (si activé)
+      if (t === 'bonus2')        dec('silverCount');
+      else if (t === 'legendary')dec('goldCount');
+      else if (t === 'platinum') dec('platinumCount');
+      else if (t === 'special')  dec('specialsCount');
+      else if (t === 'angrywhales') dec('angryWhalesCount');
     });
 
-    // ---------- Copier l'adresse en cliquant sur le badge ----------
     rankBadge?.addEventListener('click', async () => {
       const w = wallet();
       if (!w) return;
       try{ await navigator.clipboard.writeText(w); alert('Wallet address copied'); }catch{}
     });
 
-    // ---------- Bouton “Your rank” ----------
     rankBtn?.addEventListener('click', async () => {
       const w = wallet();
       if (!w){ alert('Connect your wallet first.'); return; }
@@ -396,91 +422,96 @@
       rankBadge.textContent = `Rank: ${rk}`;
     });
 
-    // ---------- Rendu du leaderboard ----------
-    function renderLeaders(rows){
+    // Récupérer les bonus d'un wallet
+    async function fetchBonusesForWallet(w){
+      const d = await safeJson(`api/bonus/stats/${w}`);
+      return {
+        special: Number(d?.special||0),
+        silver: Number(d?.silver||0),
+        gold: Number(d?.gold||0),
+        platinum: Number(d?.platinum||0),
+        diamonds: 0,
+        angrywhales: Number(d?.angrywhales||0)
+      };
+    }
+
+    // Rendu du leaderboard avec BULLE
+    async function renderLeaders(rows){
       const list = leadersOl;
       list.innerHTML='';
       if (!rows.length){ list.innerHTML='<li>No entries yet.</li>'; return; }
 
       const my = wallet();
-      rows.forEach((row, idx) => {
-        const li=document.createElement('li');
-        const name=row.display || (row.player_id ? row.player_id.slice(0,6)+'…'+row.player_id.slice(-4) : 'player');
-        const score=row.score ?? 0, xp=row.xp ?? 0, level=row.level ?? 1;
+      
+      for (let idx = 0; idx < rows.length; idx++) {
+        const row = rows[idx];
+        const li = document.createElement('li');
+        const xp = row.xp ?? 0;
+        const addr = row.player_id || '';
+        const short = addr ? addr.slice(0,6)+'…'+addr.slice(-4) : 'player';
 
-        const left = document.createElement('span');
-        left.className='left';
-        left.innerHTML = `${idx+1}. <b>${name}</b> — XP: ${xp} — Score: ${score} — Lvl: ${level}`;
+        // Récupérer les bonus de ce wallet
+        const bonuses = addr ? await fetchBonusesForWallet(addr) : {
+          special:0, silver:0, gold:0, platinum:0, diamonds:0, angrywhales:0
+        };
 
-        const right = document.createElement('span');
-        right.className='right';
-        const addr=row.player_id||'';
-        const short = addr ? addr.slice(0,6)+'…'+addr.slice(-4) : '';
-        right.innerHTML = addr ? `<span class="wallet" title="Click to copy" data-full="${addr}">${short}</span>` : '';
+        // Déterminer si c'est le wallet du joueur actuel
+        const isMe = addr && my && addr.toLowerCase() === my.toLowerCase();
 
-        if (addr && my && addr.toLowerCase()===my.toLowerCase()) li.classList.add('me');
+        // Gauche: Rang + Wallet JAUNE
+        const rankWallet = document.createElement('div');
+        rankWallet.className = 'rank-wallet';
+        rankWallet.innerHTML = `<span>${idx+1}.</span><span class="wallet-yellow">${short}</span>`;
 
-        li.appendChild(left); li.appendChild(right);
+        // Centre: BULLE avec Rank + XP + Bonus
+        const bubble = document.createElement('div');
+        bubble.className = 'info-bubble';
+        bubble.innerHTML = `
+          <span>Rank:${idx+1}</span>
+          <span class="sep">·</span>
+          <span>XP:${xp}</span>
+          <span class="sep">·</span>
+          <span class="bonuses">🟢${bonuses.special} 🥈${bonuses.silver} 🥇${bonuses.gold} 💠${bonuses.platinum} 💎${bonuses.diamonds} 🔴${bonuses.angrywhales}</span>
+        `;
+
+        // Droite: Wallet cliquable
+        const copyWallet = document.createElement('span');
+        copyWallet.className = 'wallet-copy';
+        copyWallet.textContent = short;
+        copyWallet.title = 'Click to copy';
+        copyWallet.setAttribute('data-full', addr);
+
+        if (isMe) li.classList.add('me');
+
+        li.appendChild(rankWallet);
+        li.appendChild(bubble);
+        li.appendChild(copyWallet);
         list.appendChild(li);
 
-        right.querySelector('.wallet')?.addEventListener('click', async (e)=>{
-          const full = e.currentTarget.getAttribute('data-full');
-          try{ await navigator.clipboard.writeText(full); alert('Wallet address copied'); }catch{}
+        copyWallet.addEventListener('click', async ()=>{
+          const full = copyWallet.getAttribute('data-full');
+          try{ await navigator.clipboard.writeText(full); alert('Wallet copied ✓'); }catch{}
         });
-      });
+      }
     }
 
-    // ---------- Mise à jour du bandeau Rank/XP/Bonus ----------
-    function setRankSummary({rank='—', xp='—', silver=0, gold=0}={}){
-      rankSummary.textContent = `Rank: ${rank} · XP: ${xp} · Bonus: 🥇 ${gold} · 🥈 ${silver}`;
-      if (rankBadge) rankBadge.textContent = `Rank: ${rank}`;
-    }
-
-    async function fetchBonusCounts(w){
-      const d = await safeJson(`api/bonus/stats/${w}`);
-      return { silver: Number(d?.silver||0), gold: Number(d?.gold||0) };
-    }
-
-    async function refreshMePanel(rowsMaybe){
-      const w = wallet();
-      if (!w){ setRankSummary(); return; }
-
-      let rankVal = '—';
-      const me = await safeJson(`api/rank/${w}`);
-      if (me && me.rank!=null) rankVal = me.rank;
-
-      let xpVal = '—';
-      try{
-        const rows = rowsMaybe || (await safeJson('api/leaderboard'))?.top || [];
-        const mine = rows.find(r => r.player_id && r.player_id.toLowerCase() === w.toLowerCase());
-        if (mine) xpVal = mine.xp ?? 0;
-      }catch{}
-
-      const {silver, gold} = await fetchBonusCounts(w);
-      setRankSummary({rank:rankVal, xp:xpVal, silver, gold});
-    }
-
-    // ---------- Refresh global ----------
     async function refreshLeaders(){
       const data = await safeJson('api/leaderboard');
       const rows = (data?.top || []).slice(0, 100);
-      renderLeaders(rows);
-      await refreshMePanel(rows);
+      await renderLeaders(rows);
     }
 
-    // ---------- Démarrage & rafraîchissements ----------
     (function start(){
       refreshLeaders();
       refreshBonusPanel();
-      setInterval(refreshLeaders, 300000);     // Auto-refresh 5 min
-      setInterval(refreshBonusPanel, 300000);  // Auto-refresh 5 min
+      setInterval(refreshLeaders, 300000);
+      setInterval(refreshBonusPanel, 300000);
     })();
 
-    // Le jeu émet ces events (voir game.js) :
     document.addEventListener('aw:runEnded',     () => { refreshLeaders(); });
     document.addEventListener('aw:bonusClaimed', () => { refreshLeaders(); refreshBonusPanel(); });
 
-    /* ===== [BLOC 2] PROTÉGER BOUTONS HUD ===== */
+    // Protection boutons HUD
     const hudPlay    = document.getElementById('play');
     const hudRestart = document.getElementById('restart');
 
@@ -510,7 +541,7 @@
     document.addEventListener('aw:access', updateHudGateState);
     updateHudGateState();
 
-    /* ===== [BLOC 3] START OVERLAY GATED ===== */
+    // Start overlay gated
     (function wireStartOverlay(){
       const overlay = document.getElementById('start-screen');
       const startBtn = document.getElementById('start-btn');
@@ -537,7 +568,7 @@
       });
     })();
 
-    // ---------- GO overlay -> clique Restart HUD ----------
+    // Game over overlay
     (function wireGameOverOverlay(){
       const goOverlay = document.getElementById('gameover');
       const goRestart = document.getElementById('go-restart');
@@ -549,7 +580,7 @@
       });
     })();
 
-    // ---------- Mobile helpers ----------
+    // Mobile helpers
     (function(){
       const ua = navigator.userAgent || '';
       const isMobileUA  = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
