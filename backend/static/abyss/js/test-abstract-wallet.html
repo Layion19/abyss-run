@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🧪 WalletConnect Test - Angry Whales</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 900px;
+            margin: 50px auto;
+            padding: 30px;
+            background: linear-gradient(135deg, #0a1428 0%, #1a2642 100%);
+            color: #cfe6ff;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        }
+        h1 {
+            text-align: center;
+            color: #FFD700;
+            font-size: 36px;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 10px rgba(255,215,0,0.3);
+        }
+        .subtitle {
+            text-align: center;
+            opacity: 0.8;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        button {
+            padding: 14px 28px;
+            font-size: 16px;
+            font-weight: 600;
+            background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
+            color: #000;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            margin: 10px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(255,215,0,0.3);
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255,215,0,0.5);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        #status {
+            margin: 30px 0;
+            padding: 20px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        #status p {
+            margin: 12px 0;
+            font-size: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #status strong {
+            color: #FFD700;
+            min-width: 120px;
+        }
+        #status span {
+            font-family: 'Courier New', monospace;
+            padding: 4px 8px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 4px;
+            word-break: break-all;
+            max-width: 500px;
+        }
+        .success { color: #00ff88; }
+        .error { color: #ff4444; }
+        .warning { color: #ffaa00; }
+        .buttons {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+            margin: 30px 0;
+        }
+        .info-box {
+            background: rgba(58, 134, 255, 0.1);
+            border-left: 4px solid #3A86FF;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 6px;
+        }
+        .info-box h3 {
+            margin-top: 0;
+            color: #3A86FF;
+        }
+        .info-box ul {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        .disconnect-btn {
+            background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%) !important;
+        }
+        .disconnect-btn:hover {
+            box-shadow: 0 6px 20px rgba(255,68,68,0.5) !important;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Test WalletConnect + Abstract</h1>
+    <div class="subtitle">Teste la connexion WalletConnect pour Abstract Global Wallet</div>
+    
+    <div class="info-box">
+        <h3>📝 Instructions :</h3>
+        <ul>
+            <li><strong>Pour Abstract Global Wallet :</strong> Clique sur "Test WalletConnect" → Scanne le QR ou sélectionne "Abstract" dans la liste</li>
+            <li><strong>Pour MetaMask :</strong> Clique sur "Test MetaMask" → Approuve la connexion</li>
+            <li><strong>Réseau requis :</strong> Abstract Mainnet (Chain ID: 2741)</li>
+        </ul>
+    </div>
+
+    <div id="status">
+        <p><strong>Status:</strong> <span id="connection-status" class="warning">Non connecté</span></p>
+        <p><strong>Adresse:</strong> <span id="wallet-address">-</span></p>
+        <p><strong>Balance NFT:</strong> <span id="nft-balance">-</span></p>
+        <p><strong>Accès jeu:</strong> <span id="game-access">-</span></p>
+    </div>
+
+    <div class="buttons">
+        <button onclick="testWalletConnect()">🔗 Test WalletConnect</button>
+        <button onclick="testMetaMask()">🦊 Test MetaMask</button>
+        <button class="disconnect-btn" onclick="disconnect()">❌ Déconnecter</button>
+    </div>
+
+    <div class="info-box">
+        <h3>ℹ️ Ce qui est testé :</h3>
+        <ul>
+            <li>✅ Connexion WalletConnect</li>
+            <li>✅ Lecture de l'adresse wallet (pas de signature requise)</li>
+            <li>✅ Vérification du NFT balance (contrat Angry Whales)</li>
+            <li>✅ Vérification de l'accès au jeu (>= 1 NFT requis)</li>
+        </ul>
+    </div>
+
+    <!-- WalletConnect Libraries (via jsDelivr - plus fiable) -->
+    <script src="https://cdn.jsdelivr.net/npm/@walletconnect/universal-provider@2.11.0/dist/index.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@walletconnect/modal@2.6.2/dist/index.umd.js"></script>
+
+    <script>
+        // Configuration
+        const PROJECT_ID = "f6f3cb5b74b0693aacb565cb68b80535";
+        const CHAIN_ID = 2741; // Abstract mainnet
+        const CONTRACT_ADDRESS = "0x8Bb25A82e2f0230c2CFE3278CBc16a2C93685359"; // Angry Whales NFT
+        
+        let provider = null;
+        let modal = null;
+        let librariesLoaded = false;
+        
+        // Attendre que les librairies WalletConnect soient chargées
+        function waitForLibraries() {
+            return new Promise((resolve) => {
+                if (window.WalletConnectUniversalProvider && window.WalletConnectModal) {
+                    console.log("✅ WalletConnect libraries loaded");
+                    librariesLoaded = true;
+                    resolve(true);
+                    return;
+                }
+                
+                let attempts = 0;
+                const maxAttempts = 50; // 5 secondes max
+                
+                const interval = setInterval(() => {
+                    attempts++;
+                    
+                    if (window.WalletConnectUniversalProvider && window.WalletConnectModal) {
+                        clearInterval(interval);
+                        console.log("✅ WalletConnect libraries loaded after", attempts * 100, "ms");
+                        librariesLoaded = true;
+                        resolve(true);
+                    } else if (attempts >= maxAttempts) {
+                        clearInterval(interval);
+                        console.error("❌ WalletConnect libraries failed to load");
+                        resolve(false);
+                    }
+                }, 100);
+            });
+        }
+        
+        // Initialiser au chargement de la page
+        window.addEventListener('load', async () => {
+            console.log("Page loaded, waiting for WalletConnect libraries...");
+            const loaded = await waitForLibraries();
+            if (!loaded) {
+                updateStatus("❌ Erreur : Librairies WalletConnect non chargées");
+            }
+        });
+        
+        function updateStatus(status, address = "-", balance = "-", access = "-") {
+            const statusEl = document.getElementById("connection-status");
+            statusEl.textContent = status;
+            statusEl.className = status.includes("✅") ? "success" : status.includes("❌") ? "error" : "warning";
+            
+            document.getElementById("wallet-address").textContent = address;
+            document.getElementById("nft-balance").textContent = balance;
+            document.getElementById("game-access").textContent = access;
+        }
+        
+        async function testWalletConnect() {
+            try {
+                // Vérifier que les librairies sont chargées
+                if (!librariesLoaded) {
+                    updateStatus("⏳ Chargement des librairies...");
+                    const loaded = await waitForLibraries();
+                    if (!loaded) {
+                        updateStatus("❌ Erreur : Librairies WalletConnect non disponibles");
+                        alert("Erreur : Les librairies WalletConnect n'ont pas pu se charger. Vérifie ta connexion internet et recharge la page.");
+                        return;
+                    }
+                }
+                
+                updateStatus("🔄 Initialisation WalletConnect...");
+                console.log("Starting WalletConnect test...");
+                
+                const UniversalProvider = window.WalletConnectUniversalProvider.UniversalProvider;
+                const WalletConnectModal = window.WalletConnectModal.WalletConnectModal;
+                
+                // Créer le provider
+                provider = await UniversalProvider.init({
+                    projectId: PROJECT_ID,
+                    chains: [`eip155:${CHAIN_ID}`],
+                    showQrModal: true,
+                    metadata: {
+                        name: "Angry Whales - Test",
+                        description: "Testing Abstract Global Wallet connection",
+                        url: window.location.origin,
+                        icons: ["https://abs.xyz/favicon.ico"]
+                    }
+                });
+                
+                // Créer le modal
+                modal = new WalletConnectModal({
+                    projectId: PROJECT_ID,
+                    chains: [`eip155:${CHAIN_ID}`],
+                    themeMode: "dark",
+                    enableExplorer: true
+                });
+                
+                // Événements
+                provider.on("display_uri", (uri) => {
+                    console.log("✅ WalletConnect URI generated:", uri);
+                    modal.openModal({ uri });
+                });
+                
+                provider.on("session_delete", () => {
+                    console.log("Session deleted");
+                    disconnect();
+                });
+                
+                updateStatus("🔄 Ouverture du modal...");
+                
+                // Connexion
+                await provider.connect({
+                    namespaces: {
+                        eip155: {
+                            methods: ["eth_sendTransaction", "eth_accounts", "eth_requestAccounts", "eth_call", "eth_chainId"],
+                            chains: [`eip155:${CHAIN_ID}`],
+                            events: ["chainChanged", "accountsChanged"],
+                            rpcMap: {
+                                [CHAIN_ID]: "https://api.mainnet.abs.xyz"
+                            }
+                        }
+                    }
+                });
+                
+                console.log("✅ Connected!");
+                modal.closeModal();
+                
+                // Récupérer l'adresse
+                const accounts = provider.session?.namespaces?.eip155?.accounts || [];
+                console.log("Accounts:", accounts);
+                
+                if (accounts.length === 0) {
+                    updateStatus("❌ Aucun compte trouvé");
+                    return;
+                }
+                
+                // Format: "eip155:2741:0xAddress"
+                const address = accounts[0].split(":")[2];
+                console.log("Address:", address);
+                
+                updateStatus("✅ Connecté !", address, "Vérification...");
+                
+                // Vérifier le NFT balance
+                const balance = await checkNFTBalance(address, provider);
+                const balanceNum = parseInt(balance);
+                const canPlay = balanceNum >= 1;
+                const hasBonus = balanceNum >= 20;
+                
+                let accessText = canPlay ? 
+                    (hasBonus ? "✅ Accès + Bonus" : "✅ Accès autorisé") : 
+                    "❌ 1 NFT requis";
+                
+                updateStatus("✅ Connecté !", address, balance, accessText);
+                
+            } catch (e) {
+                console.error("❌ Error:", e);
+                updateStatus("❌ Erreur: " + e.message);
+                if (modal) modal.closeModal();
+            }
+        }
+        
+        async function testMetaMask() {
+            try {
+                if (!window.ethereum) {
+                    updateStatus("❌ MetaMask non installé");
+                    alert("MetaMask n'est pas installé. Télécharge-le sur https://metamask.io");
+                    return;
+                }
+                
+                updateStatus("🔄 Connexion à MetaMask...");
+                console.log("Connecting to MetaMask...");
+                
+                const accounts = await window.ethereum.request({ 
+                    method: "eth_requestAccounts" 
+                });
+                
+                if (accounts.length === 0) {
+                    updateStatus("❌ Aucun compte");
+                    return;
+                }
+                
+                const address = accounts[0];
+                provider = window.ethereum;
+                console.log("✅ Connected:", address);
+                
+                updateStatus("✅ Connecté !", address, "Vérification...");
+                
+                // Vérifier le NFT balance
+                const balance = await checkNFTBalance(address, provider);
+                const balanceNum = parseInt(balance);
+                const canPlay = balanceNum >= 1;
+                const hasBonus = balanceNum >= 20;
+                
+                let accessText = canPlay ? 
+                    (hasBonus ? "✅ Accès + Bonus" : "✅ Accès autorisé") : 
+                    "❌ 1 NFT requis";
+                
+                updateStatus("✅ Connecté !", address, balance, accessText);
+                
+            } catch (e) {
+                console.error("❌ Error:", e);
+                updateStatus("❌ Erreur: " + e.message);
+            }
+        }
+        
+        async function checkNFTBalance(address, prov) {
+            try {
+                console.log("Checking NFT balance for:", address);
+                
+                // ERC-721 balanceOf selector
+                const selector = "0x70a08231";
+                const addrNo0x = address.replace(/^0x/, "").toLowerCase();
+                const data = selector + addrNo0x.padStart(64, "0");
+                
+                console.log("Call data:", data);
+                
+                const result = await prov.request({
+                    method: "eth_call",
+                    params: [{
+                        to: CONTRACT_ADDRESS,
+                        data: data
+                    }, "latest"]
+                });
+                
+                console.log("Raw result:", result);
+                
+                const balance = BigInt(result || "0x0");
+                console.log("✅ NFT Balance:", balance.toString());
+                
+                return balance.toString();
+            } catch (e) {
+                console.error("❌ Balance check error:", e);
+                return "Erreur vérification";
+            }
+        }
+        
+        function disconnect() {
+            console.log("Disconnecting...");
+            
+            if (provider && provider.disconnect) {
+                provider.disconnect().catch(console.error);
+            }
+            
+            provider = null;
+            updateStatus("Non connecté");
+            
+            console.log("✅ Disconnected");
+        }
+        
+        // Log de démarrage
+        console.log("🧪 Test WalletConnect initialized");
+        console.log("Project ID:", PROJECT_ID);
+        console.log("Chain ID:", CHAIN_ID);
+        console.log("Contract:", CONTRACT_ADDRESS);
+        console.log("Checking libraries...");
+        console.log("- WalletConnectUniversalProvider:", typeof window.WalletConnectUniversalProvider);
+        console.log("- WalletConnectModal:", typeof window.WalletConnectModal);
+    </script>
+</body>
+</html>

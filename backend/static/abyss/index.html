@@ -326,9 +326,17 @@
     </section>
   </div>
 
-  <!-- Wallet gate -->
+  <!-- ============================================ -->
+  <!-- SCRIPTS - ORDRE IMPORTANT !                 -->
+  <!-- ============================================ -->
+  
+  <!-- 1. MetaMask SDK (POUR METAMASK MOBILE QR) - chargé en fallback si besoin -->
   <script src="https://unpkg.com/@metamask/sdk/dist/browser/es/metamask-sdk.js"></script>
+  
+  <!-- 2. Wallet gate (charge Privy dynamiquement si nécessaire) -->
   <script type="module" src="static/abyss/js/wallet.js"></script>
+  
+  <!-- 4. Game script -->
   <script src="static/abyss/js/game.js"></script>
 
   <!-- Canvas sizing -->

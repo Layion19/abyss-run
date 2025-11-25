@@ -14,6 +14,10 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@privy-io/js-sdk-core": "^0.58.1",
     "vite": "^7.1.9"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.0"
   }
 }
